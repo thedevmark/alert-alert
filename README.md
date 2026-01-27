@@ -6,9 +6,9 @@
 /_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
 ```
 
-**The ultimate desktop tool for creating stream alerts from YouTube clips.**
+**The ultimate desktop tool for creating stream alerts from YouTube, Instagram, and TikTok clips.**
 
-Download any YouTube video segment, crop it to your desired aspect ratio, normalize audio, add end buffers, and export perfectly formatted alert videos — all in one streamlined workflow.
+Download any video segment from popular platforms, crop it to your desired aspect ratio, normalize audio, add end buffers, and export perfectly formatted alert videos — all in one streamlined workflow.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Backend-green?logo=flask&logoColor=white)
@@ -20,8 +20,10 @@ Download any YouTube video segment, crop it to your desired aspect ratio, normal
 ## ✨ Features
 
 ### 🎬 Video Processing
-- **YouTube Download** — Download clips directly from YouTube with precise start/end timestamp selection
-- **Live Video Preview** — Real-time video playback with audio in the crop preview (not just static images)
+- **Multi-Platform Support** — Download from YouTube, Instagram, and TikTok
+- **Smart URL Cleaning** — Automatically strips playlist/radio parameters from YouTube URLs
+- **Live Video Preview** — Real-time video playback with audio in the crop preview
+- **Auto-Populated Timestamps** — Start defaults to 0:00, end defaults to full video duration
 - **Precision Trimming** — Fine-tune start and end times with dual sliders after download
 - **Multiple Aspect Ratios** — Export in 1:1 (square), 16:9 (widescreen), 9:16 (vertical/TikTok), or 4:3
 - **Resolution Options** — Export at 480p, 720p, or 1080p
@@ -29,14 +31,16 @@ Download any YouTube video segment, crop it to your desired aspect ratio, normal
 
 ### 🔊 Audio
 - **Audio Normalization** — Automatic loudness normalization (EBU R128, -16 LUFS) — toggleable
-- **Separate Audio Source** — Use audio from a completely different YouTube video
+- **Separate Audio Source** — Use audio from a completely different video
 - **High-Quality Output** — Lossless audio processing pipeline with single-encode AAC at 192kbps
 
 ### 🎨 User Experience
 - **Dark Mode Interface** — Easy on the eyes during late-night editing sessions
-- **End Buffer** — Configurable still frame buffer at the end (0-5 seconds) for smooth alert transitions
+- **Helpful Error Messages** — Clear instructions on how to fix issues
+- **Dependency Status** — Settings panel shows installed/missing dependencies with download links
+- **End Buffer** — Configurable still frame buffer at the end (0-5 seconds)
 - **Smart Timestamps** — Type `90` and it auto-formats to `1:30`
-- **Persistent Settings** — Your preferences (resolution, buffer, normalization) are saved locally
+- **Persistent Settings** — Your preferences are saved locally
 - **Standalone EXE** — Single executable file, no installation required
 
 ---
@@ -47,23 +51,17 @@ Download any YouTube video segment, crop it to your desired aspect ratio, normal
 
 These must be installed on your system and available in PATH:
 
-| Tool | Install Command (Windows) | Purpose |
-|------|---------------------------|---------|
-| **FFmpeg** | `winget install Gyan.FFmpeg` | Video/audio processing |
-| **yt-dlp** | `pip install yt-dlp` | YouTube downloads |
+| Tool | Install Command (Windows) | Download Link | Purpose |
+|------|---------------------------|---------------|---------|
+| **FFmpeg** | `winget install Gyan.FFmpeg` | [ffmpeg.org](https://ffmpeg.org/download.html) | Video/audio processing |
+| **yt-dlp** | `pip install yt-dlp` | [GitHub Releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | Video downloads |
+
+> **Tip:** The app will show you which dependencies are missing and how to install them!
 
 ### Python Dependencies (for running from source)
 
 ```bash
 pip install -r requirements.txt
-```
-
-**Contents of `requirements.txt`:**
-```
-flask>=2.0.0
-waitress>=2.0.0
-yt-dlp>=2023.0.0
-Pillow>=10.0
 ```
 
 ---
@@ -95,18 +93,13 @@ Pillow>=10.0
    python app.py
    ```
 
-4. **Open in browser** (should open automatically)
-   ```
-   http://127.0.0.1:5000
-   ```
-
 ---
 
 ## 📖 How to Use
 
-### Step 1: Enter YouTube URL
-- Paste any YouTube video URL
-- Optionally set start and end timestamps (e.g., `1:30` to `2:45`)
+### Step 1: Enter Video URL
+- Paste any video URL (YouTube, Instagram, TikTok)
+- Timestamps auto-populate to full video duration
 - Click **Validate** to check the URL
 
 ### Step 2: Download & Preview
@@ -135,11 +128,9 @@ Access settings via the gear icon in the top-right corner:
 | Setting | Options | Description |
 |---------|---------|-------------|
 | **Resolution** | 480p, 720p, 1080p | Output video resolution |
-| **Aspect Ratio** | 1:1, 16:9, 9:16, 4:3 | Crop shape |
 | **End Buffer** | 0-5 seconds | Still frame at end of video |
 | **Normalize Audio** | On/Off | EBU R128 loudness normalization |
-
-All settings are saved to your browser's local storage.
+| **Dependencies** | — | Shows install status with download links |
 
 ---
 
@@ -156,51 +147,28 @@ The output will be in the `dist/` folder.
 
 ---
 
-## 📁 Project Structure
-
-```
-alert-alert/
-├── app.py              # Main Flask application
-├── requirements.txt    # Python dependencies
-├── static/
-│   ├── css/
-│   │   └── style.css   # Dark mode styling
-│   ├── js/
-│   │   ├── app.js      # Main application logic
-│   │   └── crop.js     # Crop preview functionality
-│   ├── img/
-│   │   └── logo.png    # App logo
-│   ├── index.html      # Single-page application
-│   └── favicon.ico     # App icon
-├── output/             # Processed videos saved here
-├── temp/               # Temporary processing files
-└── README.md
-```
-
----
-
-## 🐛 Troubleshooting
+## � Troubleshooting
 
 ### "FFmpeg not found"
-Make sure FFmpeg is installed and in your PATH:
+**Solution:** Install FFmpeg using one of these methods:
 ```bash
 winget install Gyan.FFmpeg
 ```
-Then restart the app.
+Or download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH.
 
 ### "yt-dlp not found"
-Install yt-dlp:
+**Solution:** Install yt-dlp:
 ```bash
 pip install yt-dlp
 ```
 
-### Video won't play in preview
-- Ensure the clip downloaded successfully
-- Try a different YouTube URL
-- Check that FFmpeg is working
+### Video URL not working
+- Make sure the URL is a direct video link (not a playlist)
+- The app automatically cleans YouTube playlist parameters
+- Instagram and TikTok links should work directly
 
 ### Port 5000 already in use
-Another application is using port 5000. Close it or modify `app.py` to use a different port.
+Another application is using port 5000. Close it and restart the app.
 
 ---
 
@@ -217,7 +185,7 @@ Created by **deutschmark**
 Built with:
 - [Flask](https://flask.palletsprojects.com/) — Web framework
 - [FFmpeg](https://ffmpeg.org/) — Video processing
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — YouTube downloads
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — Video downloads
 - [Waitress](https://docs.pylonsproject.org/projects/waitress/) — Production WSGI server
 
 ---

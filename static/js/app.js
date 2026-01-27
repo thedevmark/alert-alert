@@ -134,21 +134,51 @@ const App = (() => {
         try {
             const deps = await api("/api/check-deps");
             const missing = [];
-            if (!deps.ffmpeg?.installed) missing.push("ffmpeg");
-            if (!deps["yt-dlp"]?.installed) missing.push("yt-dlp");
-            if (!deps.ffprobe?.installed) missing.push("ffprobe");
+            const instructions = [];
 
+            // Update settings status indicators
+            const ffmpegStatus = $("dep-ffmpeg-status");
+            const ytdlpStatus = $("dep-ytdlp-status");
+
+            if (deps.ffmpeg?.installed) {
+                ffmpegStatus.textContent = "✓ Installed";
+                ffmpegStatus.className = "dep-status installed";
+            } else {
+                ffmpegStatus.textContent = "✗ Missing";
+                ffmpegStatus.className = "dep-status missing";
+                missing.push("FFmpeg");
+                instructions.push("FFmpeg: Run 'winget install Gyan.FFmpeg' or download from ffmpeg.org");
+            }
+
+            if (deps["yt-dlp"]?.installed) {
+                ytdlpStatus.textContent = "✓ Installed";
+                ytdlpStatus.className = "dep-status installed";
+            } else {
+                ytdlpStatus.textContent = "✗ Missing";
+                ytdlpStatus.className = "dep-status missing";
+                missing.push("yt-dlp");
+                instructions.push("yt-dlp: Run 'pip install yt-dlp' in Command Prompt");
+            }
+
+            // Show banner if missing dependencies
             if (missing.length > 0) {
                 const banner = $("dep-banner");
                 const msg = $("dep-message");
-                msg.innerHTML = `<strong>Missing dependencies:</strong> ${missing.join(", ")}.<br>` +
-                    `Install ffmpeg: <code>winget install Gyan.FFmpeg</code><br>` +
-                    `Install yt-dlp: <code>pip install yt-dlp</code>`;
+                const instEl = $("dep-instructions");
+
+                msg.innerHTML = `<strong>⚠️ Missing dependencies:</strong> ${missing.join(", ")}`;
+                instEl.innerHTML = `<strong>How to fix:</strong><br>${instructions.join("<br>")}`;
+
                 banner.classList.add("banner-error");
                 show(banner);
             }
         } catch (e) {
-            // Server not running
+            // Server not running - show connection error
+            const banner = $("dep-banner");
+            const msg = $("dep-message");
+            msg.innerHTML = "<strong>⚠️ Cannot connect to server.</strong> Make sure the app is running.";
+            banner.classList.add("banner-error");
+            show(banner);
         }
 
         // Auto-compute clip duration on timestamp change
@@ -242,7 +272,7 @@ const App = (() => {
     async function validateUrl() {
         const url = $("url-input").value.trim();
         if (!url) {
-            showError("step1-error", "Please enter a YouTube URL.");
+            showError("step1-error", "Please enter a video URL.");
             return;
         }
         hideError("step1-error");
@@ -265,6 +295,12 @@ const App = (() => {
             $("video-title").textContent = data.title;
             $("video-duration").textContent = formatDuration(data.duration);
             show("video-info");
+
+            // Auto-populate timestamps with full duration
+            $("start-input").value = "0:00";
+            $("end-input").value = formatTimestamp(data.duration);
+            updateClipDuration();
+
             enableStep(2);
         } catch (e) {
             showError("step1-error", "Failed to validate URL. Is the server running?");
@@ -278,7 +314,7 @@ const App = (() => {
     async function validateAudioUrl() {
         const url = $("audio-url-input").value.trim();
         if (!url) {
-            showError("audio-url-error", "Please enter a YouTube URL for audio.");
+            showError("audio-url-error", "Please enter a video URL for audio.");
             return;
         }
         hideError("audio-url-error");
