@@ -722,3 +722,71 @@ input[type="range"] {
 .hidden {
     display: none !important;
 }
+
+/* ── Dependency Links in Settings ─────────────────────────────── */
+.dep-links {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.dep-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text);
+    transition: all 0.2s;
+}
+
+.dep-link:hover {
+    border-color: var(--accent);
+    background: #1f1f1f;
+}
+
+.dep-icon {
+    font-size: 16px;
+}
+
+.dep-name {
+    flex: 1;
+    font-weight: 500;
+}
+
+.dep-status {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.dep-status.installed {
+    background: rgba(52, 211, 153, 0.2);
+    color: var(--accent-green);
+}
+
+.dep-status.missing {
+    background: rgba(239, 100, 97, 0.2);
+    color: var(--error);
+}
+
+.settings-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+/* ── Dependency Banner Instructions ───────────────────────────── */
+.dep-instructions {
+    font-size: 13px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    font-family: monospace;
+}

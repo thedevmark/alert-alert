@@ -59,6 +59,26 @@
                         </div>
                     </div>
                     <div class="settings-divider"></div>
+
+                    <!-- Dependencies Section -->
+                    <div class="settings-section">
+                        <label class="settings-label">Required Dependencies</label>
+                        <div class="dep-links">
+                            <a href="https://ffmpeg.org/download.html" target="_blank" class="dep-link">
+                                <span class="dep-icon">🎬</span>
+                                <span class="dep-name">FFmpeg</span>
+                                <span class="dep-status" id="dep-ffmpeg-status">checking...</span>
+                            </a>
+                            <a href="https://github.com/yt-dlp/yt-dlp/releases/latest" target="_blank" class="dep-link">
+                                <span class="dep-icon">📥</span>
+                                <span class="dep-name">yt-dlp</span>
+                                <span class="dep-status" id="dep-ytdlp-status">checking...</span>
+                            </a>
+                        </div>
+                        <p class="settings-hint">Click to download if missing. Restart app after installing.</p>
+                    </div>
+
+                    <div class="settings-divider"></div>
                     <button class="settings-reset" onclick="App.resetSettings()">Reset to Defaults</button>
                     <div class="settings-divider"></div>
                     <button class="settings-quit" onclick="App.shutdownApp()"
@@ -72,6 +92,7 @@
     <!-- Dependency check banner -->
     <div id="dep-banner" class="banner hidden">
         <p id="dep-message"></p>
+        <p id="dep-instructions" class="dep-instructions"></p>
     </div>
 
     <main>
@@ -80,7 +101,8 @@
             <h2><span class="step-num">1</span> Video Source</h2>
             <div class="step-content">
                 <div class="input-row">
-                    <input type="text" id="url-input" placeholder="Paste YouTube URL here..." spellcheck="false">
+                    <input type="text" id="url-input" placeholder="Paste video URL (YouTube, Instagram, TikTok)..."
+                        spellcheck="false">
                     <button id="validate-btn" onclick="App.validateUrl()">Validate</button>
                 </div>
                 <div id="video-info" class="hidden">
@@ -122,7 +144,7 @@
                         <span>Audio Source</span>
                     </div>
                     <div class="input-row">
-                        <input type="text" id="audio-url-input" placeholder="Paste YouTube URL for audio..."
+                        <input type="text" id="audio-url-input" placeholder="Paste video URL for audio..."
                             spellcheck="false">
                         <button id="validate-audio-btn" onclick="App.validateAudioUrl()">Validate</button>
                     </div>

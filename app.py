@@ -180,12 +180,60 @@ def run_deps_check():
     return results
 
 
-# ── Validate YouTube URL ────────────────────────────────────────
+# ── Validate Video URL ──────────────────────────────────────────
+
+def clean_video_url(url):
+    """
+    Clean a video URL for supported platforms.
+    - YouTube: Remove playlist, radio, and other extra parameters
+    - Instagram/TikTok: Pass through as-is (yt-dlp handles them natively)
+    """
+    from urllib.parse import urlparse, parse_qs
+    
+    if not url:
+        return url
+    
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        
+        # Instagram URLs - pass through as-is
+        if 'instagram.com' in netloc or 'instagr.am' in netloc:
+            return url
+        
+        # TikTok URLs - pass through as-is
+        if 'tiktok.com' in netloc or 'vm.tiktok.com' in netloc:
+            return url
+        
+        # Handle youtu.be short URLs
+        if 'youtu.be' in netloc:
+            video_id = parsed.path.strip('/')
+            return f"https://www.youtube.com/watch?v={video_id}"
+        
+        # Handle standard youtube.com URLs
+        if 'youtube.com' in netloc:
+            query_params = parse_qs(parsed.query)
+            
+            # Extract just the video ID
+            video_id = query_params.get('v', [None])[0]
+            
+            if video_id:
+                # Return clean URL with only the video ID
+                return f"https://www.youtube.com/watch?v={video_id}"
+        
+        # For any other URL (Twitter, etc.), pass through as-is
+        return url
+    except Exception:
+        return url
+
 
 @app.route("/api/validate-url", methods=["POST"])
 def validate_url():
     data = request.get_json()
     url = data.get("url", "").strip()
+    
+    # Clean the URL to remove playlist/radio parameters
+    url = clean_video_url(url)
     print(f"Validating URL: {url}...")
 
 
@@ -237,8 +285,12 @@ def download_clip():
     start = data.get("start", "").strip()
     end = data.get("end", "").strip()
     
+    # Clean URLs to remove playlist/radio parameters
+    url = clean_video_url(url)
+    
     # Optional separate audio source
     audio_url = data.get("audio_url", "").strip()
+    audio_url = clean_video_url(audio_url) if audio_url else ""
     audio_start = data.get("audio_start", "").strip()
     audio_end = data.get("audio_end", "").strip()
     use_separate_audio = bool(audio_url and audio_start and audio_end)
