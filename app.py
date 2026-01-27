@@ -520,8 +520,8 @@ def run_ffmpeg(args, env, timeout=120):
     return r
 
 
-def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, trim_start=0, trim_end=0, use_separate_audio=False,
-                            resolution=720, buffer_duration=2, normalize_audio=True):
+def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, trim_start=0, trim_end=0, 
+                            use_separate_audio=False, use_static_image=False, resolution=720, buffer_duration=2, normalize_audio=True):
     """Run the full ffmpeg pipeline in a background thread.
     
     Audio Quality Strategy:
@@ -543,7 +543,10 @@ def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, tri
     - normalize_audio: whether to apply loudness normalization
     """
     # Calculate output dimensions based on crop aspect ratio
-    crop_aspect = crop_width / crop_height
+    crop_aspect = 1.0
+    if crop_width and crop_height:
+        crop_aspect = crop_width / crop_height
+        
     if crop_aspect >= 1:
         # Wide or square: resolution is the width
         output_width = int(resolution)
@@ -568,6 +571,11 @@ def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, tri
         # Check for separate audio source
         audio_files = list(job_dir.glob("audio.*"))
         separate_audio_file = str(audio_files[0]) if audio_files and use_separate_audio else None
+
+        # Check for static image
+        static_image_files = list(job_dir.glob("image.*"))
+        static_image_file = str(static_image_files[0]) if static_image_files and use_static_image else None
+
 
         # Get video info for matching parameters
         probe = run_ffmpeg(
@@ -618,25 +626,37 @@ def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, tri
         crop_y = max(0, min(crop_y, src_height - crop_height))
 
         # ── Stage 1: Crop video + extract/replace audio to PCM ──
-        jobs[job_id] = {"status": "processing", "progress": 10, "stage": "Cropping video..."}
+        jobs[job_id] = {"status": "processing", "progress": 10, "stage": "Processing video..."}
         cropped_video = str(proc_dir / "cropped_video.mp4")
+        duration = trim_end - trim_start
         
-        # Crop video only (no audio)
-        # Apply trim if needed
-        vid_input_args = [FFMPEG, "-i", input_file]
-        # Use -ss / -to as Output options (after -i) for frame-accurate processing
-        # Note: -ss before -i is faster but less accurate. We want accuracy.
-        vid_trim_args = []
-        if trim_start > 0:
-            vid_trim_args.extend(["-ss", str(trim_start)])
-        if trim_end > 0 and trim_end > trim_start:
-             vid_trim_args.extend(["-t", str(trim_end - trim_start)])
-
-        vid_cmd = vid_input_args + vid_trim_args + [
-            "-vf", f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={output_width}:{output_height}",
-            "-an", "-y", cropped_video,
-        ]
-        run_ffmpeg(vid_cmd, env=env)
+        if use_static_image and static_image_file:
+             # Generate video loop from static image
+            vid_cmd = [
+                FFMPEG, "-y", 
+                "-loop", "1", "-i", static_image_file,
+                "-t", str(duration),
+                # Scale image to fit within output dimensions, padding with black (like 'contain')
+                "-vf", f"scale={output_width}:{output_height}:force_original_aspect_ratio=decrease,pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
+                cropped_video
+            ]
+            run_ffmpeg(vid_cmd, env=env)
+        else:
+            # Crop video only (no audio)
+            # Apply trim if needed
+            vid_input_args = [FFMPEG, "-i", input_file]
+            vid_trim_args = []
+            if trim_start > 0:
+                vid_trim_args.extend(["-ss", str(trim_start)])
+            if trim_end > 0 and trim_end > trim_start:
+                 vid_trim_args.extend(["-t", str(duration)])
+    
+            vid_cmd = vid_input_args + vid_trim_args + [
+                "-vf", f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={output_width}:{output_height},setsar=1",
+                "-an", "-y", cropped_video,
+            ]
+            run_ffmpeg(vid_cmd, env=env)
         
         # Extract audio to lossless PCM WAV (from source or separate file)
         jobs[job_id] = {"status": "processing", "progress": 20, "stage": "Extracting audio..."}
@@ -784,7 +804,24 @@ def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, tri
 
 @app.route("/api/process", methods=["POST"])
 def process_video():
-    data = request.get_json()
+    # Handle both JSON (legacy) and Multipart/Form-Data (file upload)
+    
+    if request.is_json:
+        data = request.get_json()
+    else:
+        # Form data parsing
+        raw_crop = request.form.get("crop")
+        raw_settings = request.form.get("settings")
+        data = {
+            "job_id": request.form.get("job_id"),
+            "crop": json.loads(raw_crop) if raw_crop else {},
+            "trim_start": request.form.get("trim_start"),
+            "trim_end": request.form.get("trim_end"),
+            "use_separate_audio": request.form.get("use_separate_audio") == "true",
+            "use_static_image": request.form.get("use_static_image") == "true",
+            "settings": json.loads(raw_settings) if raw_settings else {}
+        }
+
     job_id = data.get("job_id", "")
     crop = data.get("crop", {})
     crop_x = int(crop.get("x", 0))
@@ -795,6 +832,7 @@ def process_video():
     trim_start = float(data.get("trim_start", 0))
     trim_end = float(data.get("trim_end", 0))
     use_separate_audio = data.get("use_separate_audio", False)
+    use_static_image = data.get("use_static_image", False)
     
     # Settings
     settings = data.get("settings", {})
@@ -804,6 +842,17 @@ def process_video():
 
     if not job_id:
         return jsonify({"error": "Missing job_id"}), 400
+        
+    # Handle image upload if present
+    if use_static_image and 'static_image' in request.files:
+        file = request.files['static_image']
+        if file.filename:
+            job_dir = DOWNLOADS_DIR / job_id
+            job_dir.mkdir(parents=True, exist_ok=True)
+            # Save properly
+            ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'jpg'
+            save_path = job_dir / f"image.{ext}"
+            file.save(str(save_path))
 
     jobs[job_id] = {"status": "processing", "progress": 0, "stage": "Starting..."}
     print(f"Starting processing for job {job_id}...")
@@ -811,7 +860,7 @@ def process_video():
 
     thread = threading.Thread(
         target=run_processing_pipeline,
-        args=(job_id, crop_x, crop_y, crop_width, crop_height, trim_start, trim_end, use_separate_audio),
+        args=(job_id, crop_x, crop_y, crop_width, crop_height, trim_start, trim_end, use_separate_audio, use_static_image),
         kwargs={"resolution": resolution, "buffer_duration": buffer_duration, "normalize_audio": normalize_audio},
         daemon=True,
     )

@@ -450,14 +450,142 @@ button:disabled {
 #crop-video {
     display: block;
     max-width: 100%;
+    max-height: 500px;
     pointer-events: none;
     /* Let clicks pass through to overlay overlay is properly handled separately, but actually we want overlay on top */
 }
 
 .trim-controls {
-    margin-top: 12px;
-    padding-top: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
     border-top: 1px solid var(--border);
+}
+
+/* ── iPhone-Style Filmstrip Trimmer ─────────────────────────────── */
+.filmstrip-trimmer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.filmstrip-container {
+    position: relative;
+    flex: 1;
+    height: 56px;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.filmstrip-track {
+    display: flex;
+    height: 100%;
+    width: 100%;
+}
+
+.filmstrip-track img {
+    height: 100%;
+    width: auto;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.filmstrip-track canvas {
+    height: 100%;
+    flex-shrink: 0;
+}
+
+/* Trim selection area (the yellow box) */
+.trim-selection {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border: 3px solid #f5c518;
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Draggable handles */
+.trim-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    background: #f5c518;
+    cursor: ew-resize;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 15;
+}
+
+.trim-handle-left {
+    left: -3px;
+    border-radius: 8px 0 0 8px;
+}
+
+.trim-handle-right {
+    right: -3px;
+    border-radius: 0 8px 8px 0;
+}
+
+.handle-chevron {
+    color: #000;
+    font-size: 18px;
+    font-weight: bold;
+    user-select: none;
+}
+
+/* Darkened overlay for trimmed areas */
+.trim-overlay-left,
+.trim-overlay-right {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    pointer-events: none;
+    z-index: 5;
+}
+
+.trim-overlay-left {
+    left: 0;
+    width: 0;
+}
+
+.trim-overlay-right {
+    right: 0;
+    width: 0;
+}
+
+/* Playhead */
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #fff;
+    left: 0;
+    pointer-events: none;
+    z-index: 20;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+/* Time display below trimmer */
+.trim-time-display {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.trim-duration {
+    color: var(--accent);
+    font-weight: 600;
 }
 
 .info-label {
@@ -789,4 +917,37 @@ input[type="range"] {
     background: rgba(0, 0, 0, 0.3);
     border-radius: 4px;
     font-family: monospace;
+}
+
+/* ── Static Image Preview ─────────────────────────────────────── */
+#image-preview-container {
+    margin-top: 12px;
+    text-align: center;
+}
+
+#static-image-preview {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: 8px;
+    border: 2px solid var(--border);
+}
+
+input[type="file"] {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+input[type="file"]::file-selector-button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 12px;
 }

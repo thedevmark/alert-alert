@@ -137,6 +137,28 @@
                     </label>
                 </div>
 
+                <!-- Static Image Toggle -->
+                <div class="audio-source-toggle">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="use-static-image">
+                        <span class="toggle-text">Use static image with audio only</span>
+                    </label>
+                </div>
+
+                <!-- Static Image Upload Section (hidden by default) -->
+                <div id="static-image-section" class="hidden audio-source-section">
+                    <div class="audio-source-header">
+                        <span class="audio-icon">🖼️</span>
+                        <span>Static Image</span>
+                    </div>
+                    <div class="input-row">
+                        <input type="file" id="static-image-input" accept="image/*">
+                    </div>
+                    <div id="image-preview-container" class="hidden">
+                        <img id="static-image-preview" alt="Preview">
+                    </div>
+                </div>
+
                 <!-- Separate Audio Source Section (hidden by default) -->
                 <div id="audio-source-section" class="hidden audio-source-section">
                     <div class="audio-source-header">
@@ -206,6 +228,8 @@
                             <button class="ratio-btn" data-ratio="16:9">16:9</button>
                             <button class="ratio-btn" data-ratio="9:16">9:16</button>
                             <button class="ratio-btn" data-ratio="4:3">4:3</button>
+                            <button class="ratio-btn" data-ratio="3:4">3:4</button>
+                            <button class="ratio-btn" data-ratio="21:9">21:9</button>
                         </div>
                     </div>
                     <div class="slider-row control-row">
@@ -214,17 +238,30 @@
                     </div>
                 </div>
 
-                <!-- Trim Controls -->
+                <!-- Trim Controls - iPhone Style -->
                 <div class="trim-controls">
-                    <div class="slider-row">
-                        <span class="slider-label">Trim Start</span>
-                        <input type="range" id="trim-start" min="0" max="100" value="0" step="0.1">
-                        <span id="trim-start-val" class="slider-value">0.0s</span>
+                    <div class="filmstrip-trimmer">
+                        <div class="filmstrip-container" id="filmstrip-container">
+                            <div class="filmstrip-track" id="filmstrip-track">
+                                <!-- Thumbnails will be generated here -->
+                            </div>
+                            <div class="trim-selection" id="trim-selection">
+                                <div class="trim-handle trim-handle-left" id="trim-handle-left">
+                                    <div class="handle-chevron">‹</div>
+                                </div>
+                                <div class="trim-handle trim-handle-right" id="trim-handle-right">
+                                    <div class="handle-chevron">›</div>
+                                </div>
+                                <div class="playhead" id="playhead"></div>
+                            </div>
+                            <div class="trim-overlay-left" id="trim-overlay-left"></div>
+                            <div class="trim-overlay-right" id="trim-overlay-right"></div>
+                        </div>
                     </div>
-                    <div class="slider-row">
-                        <span class="slider-label">Trim End</span>
-                        <input type="range" id="trim-end" min="0" max="100" value="100" step="0.1">
-                        <span id="trim-end-val" class="slider-value">Max</span>
+                    <div class="trim-time-display">
+                        <span id="trim-start-val">0:00</span>
+                        <span class="trim-duration" id="trim-duration">Duration: 0:00</span>
+                        <span id="trim-end-val">0:00</span>
                     </div>
                 </div>
 
@@ -260,6 +297,7 @@
     </main>
 
     <script src="/static/js/crop.js"></script>
+    <script src="/static/js/trimmer.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 

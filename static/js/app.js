@@ -17,6 +17,10 @@ const App = (() => {
     let audioValidated = false;
     let useSeparateAudio = false;
 
+    // Static image state
+    let useStaticImage = false;
+    let staticImageFile = null;
+
     // Trim state
     let trimStart = 0;
     let trimEnd = 0;
@@ -195,12 +199,11 @@ const App = (() => {
             $(id).addEventListener("blur", (e) => formatTimestampInput(e.target));
         });
 
-        // Trim sliders
-        $("trim-start").addEventListener("input", updateTrim);
-        $("trim-end").addEventListener("input", updateTrim);
-
-        // Frame scrubber removed
-        // $("frame-scrubber").addEventListener("input", debounce(onFrameScrub, 300));
+        // Filmstrip trimmer events
+        window.addEventListener("trimchange", (e) => {
+            trimStart = e.detail.start;
+            trimEnd = e.detail.end;
+        });
 
         // Allow Enter to validate
         $("url-input").addEventListener("keydown", (e) => {
@@ -213,6 +216,10 @@ const App = (() => {
 
         // Audio source toggle
         $("use-separate-audio").addEventListener("change", onAudioToggle);
+
+        // Static image toggle
+        $("use-static-image").addEventListener("change", onStaticImageToggle);
+        $("static-image-input").addEventListener("change", onStaticImageSelect);
 
         // Close settings when clicking outside
         document.addEventListener("click", (e) => {
@@ -291,14 +298,14 @@ const App = (() => {
             }
 
             videoUrl = url;
-            videoDuration = data.duration;
+            videoDuration = data.duration || 0;
             $("video-title").textContent = data.title;
-            $("video-duration").textContent = formatDuration(data.duration);
+            $("video-duration").textContent = formatDuration(videoDuration);
             show("video-info");
 
             // Auto-populate timestamps with full duration
             $("start-input").value = "0:00";
-            $("end-input").value = formatTimestamp(data.duration);
+            $("end-input").value = formatDuration(videoDuration);
             updateClipDuration();
 
             enableStep(2);
@@ -344,6 +351,42 @@ const App = (() => {
             audioValidated = false;
         } finally {
             setLoading("validate-audio-btn", false);
+        }
+    }
+
+    // ── Toggle Handlers ──────────────────────────────────────────
+
+    function onAudioToggle(e) {
+        useSeparateAudio = e.target.checked;
+        if (useSeparateAudio) {
+            show("audio-source-section");
+        } else {
+            hide("audio-source-section");
+            audioValidated = false;
+        }
+    }
+
+    function onStaticImageToggle(e) {
+        useStaticImage = e.target.checked;
+        if (useStaticImage) {
+            show("static-image-section");
+        } else {
+            hide("static-image-section");
+            hide("image-preview-container");
+            staticImageFile = null;
+        }
+    }
+
+    function onStaticImageSelect(e) {
+        const file = e.target.files[0];
+        if (file) {
+            staticImageFile = file;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                $("static-image-preview").src = ev.target.result;
+                show("image-preview-container");
+            };
+            reader.readAsDataURL(file);
         }
     }
 
@@ -463,67 +506,21 @@ const App = (() => {
         video.onloadedmetadata = () => {
             cropPreview.initialize(video.videoWidth, video.videoHeight);
 
-            // Init trim sliders based on duration
+            // Initialize filmstrip trimmer
             const dur = video.duration;
             trimStart = 0;
             trimEnd = dur;
 
-            $("trim-start").max = dur;
-            $("trim-end").max = dur;
-            $("trim-start").value = 0;
-            $("trim-end").value = dur;
-            $("trim-start").step = 0.1; // 100ms precision
-            $("trim-end").step = 0.1;
-
-            updateTrimDisplay();
+            // Initialize the filmstrip trimmer
+            if (typeof filmstripTrimmer !== "undefined") {
+                filmstripTrimmer.initialize(video, dur);
+            }
         };
 
-        // Loop within trim
+        // Let the filmstrip trimmer handle playback looping
         video.ontimeupdate = () => {
-            if (video.currentTime < trimStart) {
-                video.currentTime = trimStart;
-            }
-            if (video.currentTime >= trimEnd) {
-                video.currentTime = trimStart;
-                if (video.paused) video.play().catch(() => { });
-            }
+            // Only handle looping if video is playing from crop preview (not trimmer)
         };
-    }
-
-    function updateTrim(e) {
-        let tStart = parseFloat($("trim-start").value);
-        let tEnd = parseFloat($("trim-end").value);
-        const duration = parseFloat($("trim-end").max);
-
-        // Enforce constraints
-        if (e && e.target.id === "trim-start") {
-            if (tStart >= tEnd) tStart = tEnd - 0.5;
-        } else if (e && e.target.id === "trim-end") {
-            if (tEnd <= tStart) tEnd = tStart + 0.5;
-        }
-
-        // Clamp
-        tStart = Math.max(0, tStart);
-        tEnd = Math.min(duration, tEnd);
-
-        trimStart = tStart;
-        trimEnd = tEnd;
-
-        // Update UI logic
-        $("trim-start").value = tStart;
-        $("trim-end").value = tEnd;
-        updateTrimDisplay();
-
-        // Jump video to start if we engaged start slider
-        if (e && e.target.id === "trim-start") {
-            const video = document.getElementById("crop-video");
-            video.currentTime = tStart;
-        }
-    }
-
-    function updateTrimDisplay() {
-        $("trim-start-val").textContent = trimStart.toFixed(1) + "s";
-        $("trim-end-val").textContent = trimEnd.toFixed(1) + "s";
     }
 
     // ── Step 4: Process & Export ─────────────────────────────────
@@ -542,17 +539,28 @@ const App = (() => {
         hide("download-section");
 
         try {
-            await api("/api/process", {
+            const formData = new FormData();
+            formData.append("job_id", jobId);
+            formData.append("crop", JSON.stringify(cropParams));
+            formData.append("trim_start", trimStart);
+            formData.append("trim_end", trimEnd);
+            formData.append("use_separate_audio", useSeparateAudio);
+            formData.append("use_static_image", useStaticImage);
+            formData.append("settings", JSON.stringify(getSettings()));
+
+            if (useStaticImage && staticImageFile) {
+                formData.append("static_image", staticImageFile);
+            }
+
+            const resp = await fetch("/api/process", {
                 method: "POST",
-                body: JSON.stringify({
-                    job_id: jobId,
-                    crop: cropParams,
-                    trim_start: trimStart,
-                    trim_end: trimEnd,
-                    use_separate_audio: useSeparateAudio,
-                    settings: getSettings(),
-                }),
+                body: formData,
             });
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.error || "Processing failed");
+            }
 
             // Start polling
             pollProgress();
