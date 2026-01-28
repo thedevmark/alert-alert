@@ -55,23 +55,25 @@ If you are new to installing developer tools, follow these steps exactly:
 1. Download Python from [python.org](https://www.python.org/downloads/).
 2. Run the installer.
 3. **IMPORTANT:** Check the box that says **"Add Python to PATH"** before clicking "Install Now".
-4. Once finished, open Command Prompt (search for `cmd` in Windows).
+4. Once finished, open Command Prompt as an Administrator (search for `cmd` in Windows).
 5. Type `python --version` and hit Enter. You should see Python 3.10 or higher.
 
 #### 2. Install FFmpeg
-1. Open Command Prompt as Administrator (Right-click Command Prompt > Run as Administrator).
-2. Type the following command and hit Enter:
+1. Ensure Command Prompt is open as Administrator (Right-click Command Prompt > Run as Administrator).
+2. Type the following command and hit Enter: 
    ```cmd
    winget install Gyan.FFmpeg
    ```
-3. Wait for it to finish. You may need to restart your computer after this.
+   (Winget is Microsoft's package installer)
+3. Wait for it to finish. 
 
 #### 3. Install yt-dlp
 1. In the same Command Prompt, type:
    ```cmd
    pip install yt-dlp
    ```
-2. If that works, you are all set!
+   (pip is Python's package installer)
+2. If that works, **restart your computer and then try launching alert-alert.exe again.**
 
 #### 4. Troubleshooting
 If you see errors like `'pip' is not recognized` or `'winget' is not recognized`:
