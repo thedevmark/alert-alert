@@ -15,18 +15,18 @@ if errorlevel 1 (
 )
 
 echo.
-echo Building EXE from AlertBox.spec...
+echo Building EXE from AlertCreator.spec...
 echo.
 
 REM Build with PyInstaller using the Spec file
 REM --clean ensures cache is cleared
-python -m PyInstaller --clean --noconfirm AlertBox.spec
+python -m PyInstaller --clean --noconfirm AlertCreator.spec
 
 echo.
 echo ========================================
 echo Build complete!
 echo.
-echo EXE location: dist\AlertBox.exe
+echo EXE location: dist\AlertCreator.exe
 echo.
 echo NOTE: Users still need FFmpeg and yt-dlp installed:
 echo   - FFmpeg: winget install Gyan.FFmpeg

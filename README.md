@@ -48,15 +48,40 @@ Download any video segment from popular platforms, crop it to your desired aspec
 ## 📋 Requirements
 
 ### System Dependencies
+You need **Python 3.10 or newer** to run or build this project.
 
-These must be installed on your system and available in PATH:
+### 🔰 Step-by-Step Installation Guide (For Beginners)
 
-| Tool | Install Command (Windows) | Download Link | Purpose |
-|------|---------------------------|---------------|---------|
-| **FFmpeg** | `winget install Gyan.FFmpeg` | [ffmpeg.org](https://ffmpeg.org/download.html) | Video/audio processing |
-| **yt-dlp** | `pip install yt-dlp` | [GitHub Releases](https://github.com/yt-dlp/yt-dlp/releases/latest) | Video downloads |
+If you are new to installing developer tools, follow these steps exactly:
 
-> **Tip:** The app will show you which dependencies are missing and how to install them!
+#### 1. Install Python
+1. Download Python from [python.org](https://www.python.org/downloads/).
+2. Run the installer.
+3. **IMPORTANT:** Check the box that says **"Add Python to PATH"** before clicking "Install Now".
+4. Once finished, open Command Prompt (search for `cmd` in Windows).
+5. Type `python --version` and hit Enter. You should see Python 3.10 or higher.
+
+#### 2. Install FFmpeg
+1. Open Command Prompt as Administrator (Right-click Command Prompt > Run as Administrator).
+2. Type the following command and hit Enter:
+   ```cmd
+   winget install Gyan.FFmpeg
+   ```
+3. Wait for it to finish. You may need to restart your computer after this.
+
+#### 3. Install yt-dlp
+1. In the same Command Prompt, type:
+   ```cmd
+   pip install yt-dlp
+   ```
+2. If that works, you are all set!
+
+#### 4. Troubleshooting
+If you see errors like `'pip' is not recognized` or `'winget' is not recognized`:
+- **For pip:** You likely didn't check "Add Python to PATH" during installation. Reinstall Python and make sure to check that box.
+- **For winget:** Ensure you are on a recent version of Windows 10 or 11. You can also download the [App Installer](https://apps.microsoft.com/store/detail/app-installer/9NBLGGH4NNS1) from the Microsoft Store.
+
+> **Tip:** The app will show you which dependencies are missing and provide individual download links if needed.
 
 ### Python Dependencies (for running from source)
 

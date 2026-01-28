@@ -60,7 +60,6 @@
                     </div>
                     <div class="settings-divider"></div>
 
-                    <!-- Dependencies Section -->
                     <div class="settings-section">
                         <label class="settings-label">Required Dependencies</label>
                         <div class="dep-links">
@@ -75,7 +74,15 @@
                                 <span class="dep-status" id="dep-ytdlp-status">checking...</span>
                             </a>
                         </div>
-                        <p class="settings-hint">Click to download if missing. Restart app after installing.</p>
+                        <div class="settings-hint">
+                            <p><strong>Missing something?</strong></p>
+                            <ol style="margin-left: 1.2rem; margin-top: 0.5rem; text-align: left;">
+                                <li><strong>FFmpeg:</strong> Open Command Prompt as Admin and run:
+                                    <code>winget install Gyan.FFmpeg</code></li>
+                                <li><strong>yt-dlp:</strong> Run: <code>pip install yt-dlp</code></li>
+                                <li>Restart this app after installing.</li>
+                            </ol>
+                        </div>
                     </div>
 
                     <div class="settings-divider"></div>
