@@ -73,7 +73,7 @@ If you are new to installing developer tools, follow these steps exactly:
    pip install yt-dlp
    ```
    (pip is Python's package installer)
-2. If that works, **restart your computer and then try launching alert-alert.exe again.**
+2. If that works, **restart your computer and then try launching AlertAlert.exe again.**
 
 #### 4. Troubleshooting
 If you see errors like `'pip' is not recognized` or `'winget' is not recognized`:
