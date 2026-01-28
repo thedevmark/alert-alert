@@ -6,7 +6,7 @@
 /_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
 ```
 
-**The ultimate desktop tool for creating stream alerts from YouTube, Instagram, and TikTok clips.**
+**The ultimate desktop tool for creating stream alerts from YouTube, Instagram, and TikTok.**
 
 Download any video segment from popular platforms, crop it to your desired aspect ratio, normalize audio, add end buffers, and export perfectly formatted alert videos — all in one streamlined workflow.
 
@@ -23,7 +23,6 @@ Download any video segment from popular platforms, crop it to your desired aspec
 - **Multi-Platform Support** — Download from YouTube, Instagram, and TikTok
 - **Smart URL Cleaning** — Automatically strips playlist/radio parameters from YouTube URLs
 - **Live Video Preview** — Real-time video playback with audio in the crop preview
-- **Auto-Populated Timestamps** — Start defaults to 0:00, end defaults to full video duration
 - **Precision Trimming** — Fine-tune start and end times with dual sliders after download
 - **Multiple Aspect Ratios** — Export in 1:1 (square), 16:9 (widescreen), 9:16 (vertical/TikTok), or 4:3
 - **Resolution Options** — Export at 480p, 720p, or 1080p
@@ -38,8 +37,6 @@ Download any video segment from popular platforms, crop it to your desired aspec
 - **Dark Mode Interface** — Easy on the eyes during late-night editing sessions
 - **Helpful Error Messages** — Clear instructions on how to fix issues
 - **Dependency Status** — Settings panel shows installed/missing dependencies with download links
-- **End Buffer** — Configurable still frame buffer at the end (0-5 seconds)
-- **Smart Timestamps** — Type `90` and it auto-formats to `1:30`
 - **Persistent Settings** — Your preferences are saved locally
 - **Standalone EXE** — Single executable file, no installation required
 
