@@ -26,7 +26,7 @@ echo.
 echo ========================================
 echo Build complete!
 echo.
-echo EXE location: dist\AlertCreator.exe
+echo EXE location: dist\Alert! Alert!.exe
 echo.
 echo NOTE: Users still need FFmpeg and yt-dlp installed:
 echo   - FFmpeg: winget install Gyan.FFmpeg
