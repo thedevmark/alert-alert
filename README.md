@@ -6,7 +6,7 @@
 /_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
 ```
 
-**The ultimate desktop tool for creating stream alerts from YouTube, Instagram, and TikTok.**
+**The ultimate desktop tool for creating stream alerts from YouTube, Instagram, and TikTok sources**
 
 Download any video segment from popular platforms, crop it to your desired aspect ratio, normalize audio, add end buffers, and export perfectly formatted alert videos — all in one streamlined workflow.
 
