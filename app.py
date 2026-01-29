@@ -625,122 +625,124 @@ def run_processing_pipeline(job_id, crop_x, crop_y, crop_width, crop_height, tri
         crop_x = max(0, min(crop_x, src_width - crop_width))
         crop_y = max(0, min(crop_y, src_height - crop_height))
 
-        # ── Stage 1: Crop video + extract/replace audio to PCM ──
-        jobs[job_id] = {"status": "processing", "progress": 10, "stage": "Processing video..."}
-        cropped_video = str(proc_dir / "cropped_video.mp4")
         duration = trim_end - trim_start
-        
-        if use_static_image and static_image_file:
-             # Generate video loop from static image
-            vid_cmd = [
-                FFMPEG, "-y", 
-                "-loop", "1", "-i", static_image_file,
-                "-t", str(duration),
-                # Scale image to fit within output dimensions, padding with black (like 'contain')
-                "-vf", f"scale={output_width}:{output_height}:force_original_aspect_ratio=decrease,pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
-                cropped_video
-            ]
-            run_ffmpeg(vid_cmd, env=env)
-        else:
-            # Crop video only (no audio)
-            # Apply trim if needed
-            vid_input_args = [FFMPEG, "-i", input_file]
-            vid_trim_args = []
-            if trim_start > 0:
-                vid_trim_args.extend(["-ss", str(trim_start)])
-            if trim_end > 0 and trim_end > trim_start:
-                 vid_trim_args.extend(["-t", str(duration)])
-    
-            vid_cmd = vid_input_args + vid_trim_args + [
-                "-vf", f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={output_width}:{output_height},setsar=1",
-                "-an", "-y", cropped_video,
-            ]
-            run_ffmpeg(vid_cmd, env=env)
-        
-        # Extract audio to lossless PCM WAV (from source or separate file)
-        jobs[job_id] = {"status": "processing", "progress": 20, "stage": "Extracting audio..."}
-        raw_audio = str(proc_dir / "raw_audio.wav")
         audio_source = separate_audio_file if separate_audio_file else input_file
         
-        aud_input_args = [FFMPEG, "-i", audio_source]
-        aud_trim_args = []
-        if trim_start > 0:
-            aud_trim_args.extend(["-ss", str(trim_start)])
-        if trim_end > 0 and trim_end > trim_start:
-             aud_trim_args.extend(["-t", str(trim_end - trim_start)])
-
-        aud_cmd = aud_input_args + aud_trim_args + [
-            "-vn", "-acodec", "pcm_s16le", "-ar", sample_rate, "-ac", "2",
-            "-y", raw_audio,
-        ]
+        # ── Stage 1: Audio Analysis (if needed) ──
+        measured_loudnorm_filter = ""
         
-        run_ffmpeg(aud_cmd, env=env)
-
-        # ── Stage 2: Audio processing ──
         if normalize_audio:
-            # ── Stage 2a: Loudnorm measure (on PCM - no quality loss) ──
-            jobs[job_id] = {"status": "processing", "progress": 30, "stage": "Analyzing audio levels..."}
-            measure_result = subprocess.run([
-                FFMPEG, "-i", raw_audio,
-                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
-                "-f", "null", NULL_DEVICE,
-            ], capture_output=True, text=True, timeout=120, env=env)
+            jobs[job_id] = {"status": "processing", "progress": 15, "stage": "Analyzing audio levels..."}
+
+            # Analyze source audio directly with trim applied
+            # Note: We duplicate the input args here for the analysis pass
+            analysis_args = [FFMPEG]
+            if trim_start > 0:
+                analysis_args.extend(["-ss", str(trim_start)])
+
+            analysis_args.extend(["-i", audio_source])
+
+            if trim_end > 0 and trim_end > trim_start:
+                 analysis_args.extend(["-t", str(duration)])
+
+            # Use resample to ensure consistent analysis
+            analysis_args.extend([
+                "-af", f"aresample={sample_rate},loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+                "-f", "null", NULL_DEVICE
+            ])
+
+            measure_result = subprocess.run(
+                analysis_args, capture_output=True, text=True, timeout=120, env=env
+            )
 
             # Parse the loudnorm JSON from stderr
             stderr_text = measure_result.stderr
             marker = '"input_i"'
             marker_pos = stderr_text.find(marker)
-            if marker_pos == -1:
-                jobs[job_id] = {"status": "error", "error": "Failed to measure audio loudness"}
-                return
-            json_start = stderr_text.rfind("{", 0, marker_pos)
-            json_end = stderr_text.find("}", marker_pos) + 1
-            measured = json.loads(stderr_text[json_start:json_end])
+            if marker_pos != -1:
+                json_start = stderr_text.rfind("{", 0, marker_pos)
+                json_end = stderr_text.find("}", marker_pos) + 1
+                try:
+                    measured = json.loads(stderr_text[json_start:json_end])
+                    measured_loudnorm_filter = (
+                        f",loudnorm=I=-16:TP=-1.5:LRA=11"
+                        f":measured_I={measured['input_i']}"
+                        f":measured_TP={measured['input_tp']}"
+                        f":measured_LRA={measured['input_lra']}"
+                        f":measured_thresh={measured['input_thresh']}"
+                        f":offset={measured['target_offset']}"
+                        f":linear=true"
+                    )
+                except json.JSONDecodeError:
+                    print("Failed to parse loudnorm JSON, skipping normalization pass 2")
 
-            # ── Stage 2b: Loudnorm apply to PCM (still lossless) ──
-            jobs[job_id] = {"status": "processing", "progress": 45, "stage": "Normalizing audio..."}
-            processed_audio = str(proc_dir / "processed_audio.wav")
-            loudnorm_filter = (
-                f"loudnorm=I=-16:TP=-1.5:LRA=11"
-                f":measured_I={measured['input_i']}"
-                f":measured_TP={measured['input_tp']}"
-                f":measured_LRA={measured['input_lra']}"
-                f":measured_thresh={measured['input_thresh']}"
-                f":offset={measured['target_offset']}"
-                f":linear=true"
-            )
-            run_ffmpeg([
-                FFMPEG, "-i", raw_audio,
-                "-af", loudnorm_filter,
-                "-acodec", "pcm_s16le",
-                "-y", processed_audio,
-            ], env=env)
-        else:
-            # Skip normalization, use raw audio directly
-            jobs[job_id] = {"status": "processing", "progress": 45, "stage": "Processing audio..."}
-            processed_audio = raw_audio
-
-        # ── Stage 3: Mux video + processed audio ──
-        jobs[job_id] = {"status": "processing", "progress": 55, "stage": "Combining video and audio..."}
+        # ── Stage 2: Processing (Combined Video + Audio) ──
+        jobs[job_id] = {"status": "processing", "progress": 40, "stage": "Processing video and audio..."}
         cropped = str(proc_dir / "cropped.mp4")
         
-        # Get video duration to trim audio if needed
-        video_probe = run_ffmpeg(
-            [FFPROBE, "-v", "quiet", "-print_format", "json",
-             "-show_format", cropped_video],
-            env=env, timeout=15
-        )
-        video_info = json.loads(video_probe.stdout)
-        video_duration = float(video_info.get("format", {}).get("duration", 0))
+        # Build Filter Complex
+        # Video: [0:v]...[v]
+        # Audio: [1:a]...[a] (or [0:a] if same input)
         
-        run_ffmpeg([
-            FFMPEG, "-i", cropped_video, "-i", processed_audio,
-            "-c:v", "copy", "-c:a", "pcm_s16le",
-            "-t", str(video_duration),  # Trim to video length
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-y", cropped,
-        ], env=env)
+        cmd = [FFMPEG, "-y"]
+
+        # Input 0: Video Source
+        if use_static_image and static_image_file:
+             cmd.extend(["-loop", "1", "-i", static_image_file])
+             # Video filter for static image
+             vf = f"scale={output_width}:{output_height}:force_original_aspect_ratio=decrease,pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        else:
+            if trim_start > 0:
+                cmd.extend(["-ss", str(trim_start)])
+            cmd.extend(["-i", input_file])
+            # Video filter for video clip
+            vf = f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={output_width}:{output_height},setsar=1"
+
+        # Input 1 (or 0): Audio Source
+        # If separate audio, it's a second input. If separate_audio is false but we used static image, we need audio from input_file.
+        # If normal video, audio is from Input 0.
+
+        separate_audio_input_idx = None
+
+        if use_separate_audio:
+            # Separate audio file is Input 1
+            if trim_start > 0:
+                cmd.extend(["-ss", str(trim_start)])
+            cmd.extend(["-i", separate_audio_file])
+            separate_audio_input_idx = 1
+        elif use_static_image:
+            # Audio comes from original video file, which must be Input 1 because Input 0 is image
+            if trim_start > 0:
+                cmd.extend(["-ss", str(trim_start)])
+            cmd.extend(["-i", input_file])
+            separate_audio_input_idx = 1
+        else:
+            # Audio comes from Input 0 (video file)
+            separate_audio_input_idx = 0
+
+        # Common Output Duration
+        if trim_end > 0 and trim_end > trim_start:
+             cmd.extend(["-t", str(duration)])
+
+        # Audio Filter Chain
+        # Always resample to PCM s16le compatible and stereo
+        af = f"aresample={sample_rate},aformat=channel_layouts=stereo"
+        if measured_loudnorm_filter:
+            af += measured_loudnorm_filter
+
+        # Filter Complex Construction
+        filter_complex = f"[0:v]{vf}[v];[{separate_audio_input_idx}:a]{af}[a]"
+
+        cmd.extend([
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", # Ensure video format matches previous intermediate
+            "-c:a", "pcm_s16le", # PCM audio
+            cropped
+        ])
+
+        # Run combined command
+        run_ffmpeg(cmd, env=env)
 
         # ── Stage 4: Extract last frame + create still buffer ──
         if buffer_duration > 0:
