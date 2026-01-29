@@ -278,72 +278,39 @@ def parse_timestamp_to_seconds(ts):
         return parts[0]
 
 
-@app.route("/api/download", methods=["POST"])
-def download_clip():
-    data = request.get_json()
-    url = data.get("url", "").strip()
-    start = data.get("start", "").strip()
-    end = data.get("end", "").strip()
-    
-    # Clean URLs to remove playlist/radio parameters
-    url = clean_video_url(url)
-    
-    # Optional separate audio source
-    audio_url = data.get("audio_url", "").strip()
-    audio_url = clean_video_url(audio_url) if audio_url else ""
-    audio_start = data.get("audio_start", "").strip()
-    audio_end = data.get("audio_end", "").strip()
-    use_separate_audio = bool(audio_url and audio_start and audio_end)
-
-    if not url or not start or not end:
-        return jsonify({"error": "Missing url, start, or end"}), 400
-
-    start_sec = parse_timestamp_to_seconds(start)
-    end_sec = parse_timestamp_to_seconds(end)
-    if end_sec <= start_sec:
-        return jsonify({"error": "End time must be after start time"}), 400
-
-    if use_separate_audio:
-        audio_start_sec = parse_timestamp_to_seconds(audio_start)
-        audio_end_sec = parse_timestamp_to_seconds(audio_end)
-        if audio_end_sec <= audio_start_sec:
-            return jsonify({"error": "Audio end time must be after start time"}), 400
-
-    job_id = uuid.uuid4().hex[:8]
-    job_dir = DOWNLOADS_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-
-    output_template = str(job_dir / "clip.%(ext)s")
-    section = f"*{start_sec}-{end_sec}"
-
-    jobs[job_id] = {"status": "downloading", "progress": 0, "stage": "Downloading video clip..."}
-    print(f"Starting download job {job_id} for {url} ({start}-{end})")
-
-
-    # Build yt-dlp command with --ffmpeg-location so it can find ffmpeg
-    ytdlp_cmd = [
-        YTDLP,
-        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--download-sections", section,
-        "--merge-output-format", "mp4",
-        "-o", output_template,
-    ]
-    if FFMPEG_DIR:
-        ytdlp_cmd.extend(["--ffmpeg-location", FFMPEG_DIR])
-    ytdlp_cmd.append(url)
-
+def run_download_pipeline(job_id, url, start_sec, end_sec, use_separate_audio=False,
+                         audio_url="", audio_start_sec=0, audio_end_sec=0):
+    """Run the download pipeline in a background thread."""
     try:
+        job_dir = DOWNLOADS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        output_template = str(job_dir / "clip.%(ext)s")
+        section = f"*{start_sec}-{end_sec}"
+
+        # Build yt-dlp command with --ffmpeg-location so it can find ffmpeg
+        ytdlp_cmd = [
+            YTDLP,
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--download-sections", section,
+            "--merge-output-format", "mp4",
+            "-o", output_template,
+        ]
+        if FFMPEG_DIR:
+            ytdlp_cmd.extend(["--ffmpeg-location", FFMPEG_DIR])
+        ytdlp_cmd.append(url)
+
         r = run_subprocess(ytdlp_cmd, timeout=300)
         
         if r.returncode != 0:
             jobs[job_id] = {"status": "error", "error": r.stderr.strip() or "Download failed"}
-            return jsonify({"error": r.stderr.strip() or "Download failed"}), 500
+            return
 
         # Find the downloaded file
         files = list(job_dir.glob("clip.*"))
         if not files:
             jobs[job_id] = {"status": "error", "error": "No file downloaded"}
-            return jsonify({"error": "No file downloaded"}), 500
+            return
 
         filename = files[0].name
         
@@ -369,13 +336,13 @@ def download_clip():
             
             if r.returncode != 0:
                 jobs[job_id] = {"status": "error", "error": f"Audio download failed: {r.stderr.strip()}"}
-                return jsonify({"error": f"Audio download failed: {r.stderr.strip()}"}), 500
+                return
             
             # Find the audio file
             audio_files = list(job_dir.glob("audio.*"))
             if not audio_files:
                 jobs[job_id] = {"status": "error", "error": "No audio file downloaded"}
-                return jsonify({"error": "No audio file downloaded"}), 500
+                return
             
             jobs[job_id] = {
                 "status": "downloaded", 
@@ -383,24 +350,63 @@ def download_clip():
                 "audio_filename": audio_files[0].name,
                 "use_separate_audio": True
             }
-            return jsonify({
-                "job_id": job_id, 
-                "filename": filename, 
-                "audio_filename": audio_files[0].name,
-                "use_separate_audio": True,
-                "status": "downloaded"
-            })
+            return
         
         jobs[job_id] = {"status": "downloaded", "filename": filename, "use_separate_audio": False}
         print(f"Download job {job_id} complete: {filename}")
-        return jsonify({"job_id": job_id, "filename": filename, "status": "downloaded"})
 
     except subprocess.TimeoutExpired:
         jobs[job_id] = {"status": "error", "error": "Download timed out"}
-        return jsonify({"error": "Download timed out"}), 504
     except Exception as e:
         jobs[job_id] = {"status": "error", "error": str(e)}
-        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/download", methods=["POST"])
+def download_clip():
+    data = request.get_json()
+    url = data.get("url", "").strip()
+    start = data.get("start", "").strip()
+    end = data.get("end", "").strip()
+
+    # Clean URLs to remove playlist/radio parameters
+    url = clean_video_url(url)
+
+    # Optional separate audio source
+    audio_url = data.get("audio_url", "").strip()
+    audio_url = clean_video_url(audio_url) if audio_url else ""
+    audio_start = data.get("audio_start", "").strip()
+    audio_end = data.get("audio_end", "").strip()
+    use_separate_audio = bool(audio_url and audio_start and audio_end)
+
+    if not url or not start or not end:
+        return jsonify({"error": "Missing url, start, or end"}), 400
+
+    start_sec = parse_timestamp_to_seconds(start)
+    end_sec = parse_timestamp_to_seconds(end)
+    if end_sec <= start_sec:
+        return jsonify({"error": "End time must be after start time"}), 400
+
+    audio_start_sec = 0
+    audio_end_sec = 0
+    if use_separate_audio:
+        audio_start_sec = parse_timestamp_to_seconds(audio_start)
+        audio_end_sec = parse_timestamp_to_seconds(audio_end)
+        if audio_end_sec <= audio_start_sec:
+            return jsonify({"error": "Audio end time must be after start time"}), 400
+
+    job_id = uuid.uuid4().hex[:8]
+
+    jobs[job_id] = {"status": "downloading", "progress": 0, "stage": "Downloading video clip..."}
+    print(f"Starting download job {job_id} for {url} ({start}-{end})")
+
+    thread = threading.Thread(
+        target=run_download_pipeline,
+        args=(job_id, url, start_sec, end_sec, use_separate_audio, audio_url, audio_start_sec, audio_end_sec),
+        daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id, "status": "downloading"})
 
 
 # ── Video info ──────────────────────────────────────────────────
