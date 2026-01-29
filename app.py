@@ -6,6 +6,7 @@ import glob
 import platform
 import subprocess
 import threading
+from functools import lru_cache
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
@@ -90,6 +91,7 @@ DENO = find_tool("deno")
 FFMPEG_DIR = str(Path(FFMPEG).parent) if FFMPEG != "ffmpeg" else None
 
 # Build an env dict that includes ffmpeg and deno dirs on PATH
+@lru_cache(maxsize=1)
 def get_env():
     """Return an env dict with ffmpeg and deno directories added to PATH."""
     env = os.environ.copy()
