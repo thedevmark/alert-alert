@@ -454,12 +454,60 @@ const App = (() => {
             if (data.error) {
                 showError("step2-error", data.error);
                 hide("download-status");
+                setLoading("download-btn", false);
                 return;
             }
 
             jobId = data.job_id;
-            $("download-status-text").textContent = "Downloaded! Loading preview...";
 
+            // Poll for completion
+            pollDownload(jobId);
+
+        } catch (e) {
+            showError("step2-error", "Download failed: " + e.message);
+            hide("download-status");
+            setLoading("download-btn", false);
+        }
+    }
+
+    function pollDownload(id) {
+        if (pollTimer) clearInterval(pollTimer);
+
+        pollTimer = setInterval(async () => {
+             try {
+                const data = await api(`/api/status/${id}`);
+
+                if (data.status === "error") {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    showError("step2-error", data.error || "Download failed");
+                    hide("download-status");
+                    setLoading("download-btn", false);
+                    return;
+                }
+
+                if (data.status === "downloaded") {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    $("download-status-text").textContent = "Downloaded! Loading preview...";
+
+                    finishDownload();
+                    return;
+                }
+
+                // Update progress text if needed
+                if (data.stage) {
+                     $("download-status-text").textContent = data.stage;
+                }
+
+             } catch (e) {
+                 // ignore network errors, retry
+             }
+        }, 1000);
+    }
+
+    async function finishDownload() {
+        try {
             // Get video info
             videoInfo = await api(`/api/video-info/${jobId}`);
 
@@ -471,7 +519,7 @@ const App = (() => {
             enableStep(4);
 
         } catch (e) {
-            showError("step2-error", "Download failed: " + e.message);
+            showError("step2-error", "Failed to load video info: " + e.message);
             hide("download-status");
         } finally {
             setLoading("download-btn", false);
