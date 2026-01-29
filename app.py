@@ -11,6 +11,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 
 import sys
 import webbrowser
+import functools
 
 
 # Handle PyInstaller paths
@@ -227,6 +228,21 @@ def clean_video_url(url):
         return url
 
 
+@functools.lru_cache(maxsize=32)
+def _get_video_info(url):
+    """
+    Fetch video info from yt-dlp.
+    Raises exception on failure so lru_cache only caches success.
+    """
+    r = run_subprocess([YTDLP, "--dump-json", "--no-download", url], timeout=30)
+
+    if r.returncode != 0:
+        # Raise exception with the error message
+        raise RuntimeError(r.stderr.strip() or "Invalid URL")
+
+    return json.loads(r.stdout)
+
+
 @app.route("/api/validate-url", methods=["POST"])
 def validate_url():
     data = request.get_json()
@@ -241,13 +257,8 @@ def validate_url():
         return jsonify({"valid": False, "error": "No URL provided"}), 400
 
     try:
-        r = run_subprocess([YTDLP, "--dump-json", "--no-download", url], timeout=30)
+        info = _get_video_info(url)
         
-        if r.returncode != 0:
-            print(f"  Validation failed: {r.stderr.strip()[:100]}...")
-            return jsonify({"valid": False, "error": r.stderr.strip() or "Invalid URL"})
-
-        info = json.loads(r.stdout)
         title = info.get("title", "Unknown")
         print(f"  Validation success: {title}")
         return jsonify({
@@ -260,6 +271,9 @@ def validate_url():
         return jsonify({"valid": False, "error": "Request timed out"}), 504
     except json.JSONDecodeError:
         return jsonify({"valid": False, "error": "Failed to parse video info"}), 500
+    except RuntimeError as e:
+        print(f"  Validation failed: {str(e)[:100]}...")
+        return jsonify({"valid": False, "error": str(e)})
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
