@@ -239,11 +239,37 @@ header h1 {
     gap: 12px;
 }
 
-.header-logo {
-    width: 32px;
-    height: 32px;
-    border-radius: 4px;
-    image-rendering: pixelated;
+.logo-text {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.3px;
+}
+
+/* Animated exclamation marks */
+.ascii-bang {
+    display: inline-block;
+    font-family: monospace;
+    font-weight: bold;
+    width: 1em;
+    text-align: center;
+    transition: text-shadow 0.2s;
+}
+
+#ascii-bang-1 {
+    color: var(--accent);
+    text-shadow: 0 0 6px var(--accent);
+}
+
+#ascii-bang-2 {
+    color: var(--error);
+    text-shadow: 0 0 6px var(--error);
+}
+
+/* When loading, both turn accent color */
+.ascii-bang.loading {
+    color: var(--accent);
+    text-shadow: 0 0 8px var(--accent);
 }
 
 /* ── Banner ──────────────────────────────────────────────────── */
@@ -268,9 +294,137 @@ header h1 {
 
 /* ── Main layout ──────────────────────────────────────────────── */
 main {
-    max-width: 800px;
+    max-width: 100%;
     margin: 0 auto;
     padding: 24px;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+}
+
+.main-layout {
+    display: flex;
+    gap: 24px;
+    align-items: stretch;
+    height: 100%;
+}
+
+/* Workflow steps column */
+.workflow-steps {
+    flex: 1;
+    min-width: 300px;
+    max-width: 550px;
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+/* Floating video sidebar */
+.video-sidebar {
+    flex: 1;
+    min-width: 300px;
+    max-width: 50%;
+    order: -1; /* Appear on left */
+    display: flex;
+    flex-direction: column;
+}
+
+.video-preview-sticky {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow: hidden;
+}
+
+.video-sidebar #crop-container {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+    min-height: 200px;
+    max-height: calc(100vh - 250px); /* Limit container height */
+}
+
+.video-sidebar #crop-video {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 250px); /* Limit height for vertical videos */
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+
+.preview-controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    flex-shrink: 0;
+}
+
+.preview-controls .control-btn {
+    flex: 1;
+}
+
+.volume-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px;
+    background: var(--bg-base);
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.volume-icon {
+    font-size: 14px;
+}
+
+.volume-control input[type="range"] {
+    flex: 1;
+}
+
+.volume-value {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 35px;
+    text-align: right;
+}
+
+/* Responsive: Stack on narrow screens */
+@media (max-width: 900px) {
+    main {
+        height: auto;
+        overflow: visible;
+    }
+
+    .main-layout {
+        flex-direction: column;
+        height: auto;
+    }
+
+    .video-sidebar {
+        width: 100%;
+        max-width: 100%;
+        order: 0;
+        max-height: 50vh;
+    }
+
+    .video-preview-sticky {
+        position: relative;
+        top: 0;
+    }
+
+    .workflow-steps {
+        max-width: 100%;
+        overflow-y: visible;
+    }
 }
 
 /* ── Steps ────────────────────────────────────────────────────── */
@@ -315,8 +469,98 @@ main {
     font-weight: 700;
 }
 
+.step-optional {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
 .step-content {
     padding: 16px;
+}
+
+/* ── Source Toggle ────────────────────────────────────────────── */
+.source-toggle {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+    background: var(--bg-base);
+    padding: 4px;
+    border-radius: 6px;
+}
+
+.source-btn {
+    flex: 1;
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.source-btn:hover {
+    color: var(--text);
+}
+
+.source-btn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* ── File Upload ──────────────────────────────────────────────── */
+.file-upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px 16px;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.file-upload-area:hover,
+.file-upload-area.drag-over {
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.file-upload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-upload-icon {
+    font-size: 32px;
+}
+
+.file-upload-area p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.file-upload-hint {
+    font-size: 12px !important;
+}
+
+.link-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: inherit;
+    text-decoration: underline;
+    padding: 0;
+}
+
+.link-btn:hover {
+    color: var(--accent-hover);
 }
 
 /* ── Inputs ───────────────────────────────────────────────────── */
@@ -382,26 +626,6 @@ button:active:not(:disabled) {
     transform: translateY(0);
 }
 
-/* ── Crop Placeholder ──────────────────────────────────────── */
-#crop-placeholder {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-card);
-    color: var(--text-muted);
-    font-size: 14px;
-    text-align: center;
-    padding: 20px;
-    border-radius: 4px;
-    border: 1px dashed var(--border);
-}
-
 button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -461,129 +685,41 @@ button:disabled {
     border-top: 1px solid var(--border);
 }
 
-/* ── iPhone-Style Filmstrip Trimmer ─────────────────────────────── */
-.filmstrip-trimmer {
+/* ── Basic Trim Sliders ─────────────────────────────────────────── */
+.trim-slider-row {
+    margin-bottom: 12px;
+}
+
+.trim-label {
     display: flex;
     align-items: center;
     gap: 12px;
-}
-
-.filmstrip-container {
-    position: relative;
-    flex: 1;
-    height: 56px;
-    background: #000;
-    border-radius: 8px;
-    overflow: hidden;
-}
-
-.filmstrip-track {
-    display: flex;
-    height: 100%;
-    width: 100%;
-}
-
-.filmstrip-track img {
-    height: 100%;
-    width: auto;
-    object-fit: cover;
-    flex-shrink: 0;
-}
-
-.filmstrip-track canvas {
-    height: 100%;
-    flex-shrink: 0;
-}
-
-/* Trim selection area (the yellow box) */
-.trim-selection {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    border: 3px solid #f5c518;
-    border-radius: 8px;
-    pointer-events: none;
-    z-index: 10;
-}
-
-/* Draggable handles */
-.trim-handle {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 20px;
-    background: #f5c518;
-    cursor: ew-resize;
-    pointer-events: auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 15;
-}
-
-.trim-handle-left {
-    left: -3px;
-    border-radius: 8px 0 0 8px;
-}
-
-.trim-handle-right {
-    right: -3px;
-    border-radius: 0 8px 8px 0;
-}
-
-.handle-chevron {
-    color: #000;
-    font-size: 18px;
-    font-weight: bold;
-    user-select: none;
-}
-
-/* Darkened overlay for trimmed areas */
-.trim-overlay-left,
-.trim-overlay-right {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    pointer-events: none;
-    z-index: 5;
-}
-
-.trim-overlay-left {
-    left: 0;
-    width: 0;
-}
-
-.trim-overlay-right {
-    right: 0;
-    width: 0;
-}
-
-/* Playhead */
-.playhead {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: #fff;
-    left: 0;
-    pointer-events: none;
-    z-index: 20;
-    box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-}
-
-/* Time display below trimmer */
-.trim-time-display {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 8px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-muted);
 }
 
-.trim-duration {
+.trim-label span:first-child {
+    min-width: 70px;
+}
+
+.trim-label input[type="range"] {
+    flex: 1;
+}
+
+.trim-val {
+    min-width: 50px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+
+.trim-duration-display {
+    text-align: center;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+#trim-duration {
     color: var(--accent);
     font-weight: 600;
 }
@@ -630,37 +766,23 @@ button:disabled {
 }
 
 /* ── Crop preview ─────────────────────────────────────────────── */
-#crop-wrapper {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 12px;
-}
-
 #crop-container {
     position: relative;
-    display: inline-block;
+    display: block;
     line-height: 0;
     overflow: hidden;
     border-radius: 6px;
     border: 1px solid var(--border);
 }
 
-#crop-image {
-    max-width: 100%;
-    height: auto;
-    display: block;
-    user-select: none;
-    -webkit-user-drag: none;
-}
-
 #crop-overlay {
     position: absolute;
-    display: none;
     border: 2px solid var(--accent);
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
     cursor: move;
     z-index: 10;
     transition: box-shadow 0.2s;
+    pointer-events: auto;
 }
 
 #crop-overlay.dragging {

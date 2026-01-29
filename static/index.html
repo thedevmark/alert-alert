@@ -4,15 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>deutschmark's Alert! Alert!</title>
+    <title>Alert! Alert!</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 
 <body>
     <header>
         <div class="header-brand">
-            <img src="/static/img/logo.png" alt="Logo" class="header-logo">
-            <h1>deutschmark's Alert! Alert!</h1>
+            <h1 class="logo-text">Alert<span class="ascii-bang" id="ascii-bang-1">!</span> Alert<span class="ascii-bang" id="ascii-bang-2">!</span></h1>
         </div>
         <div class="header-actions">
             <div class="settings-dropdown">
@@ -102,209 +101,212 @@
         <p id="dep-instructions" class="dep-instructions"></p>
     </div>
 
-    <main>
-        <!-- Step 1: YouTube URL -->
-        <section class="step" id="step-1">
-            <h2><span class="step-num">1</span> Video Source</h2>
-            <div class="step-content">
-                <div class="input-row">
-                    <input type="text" id="url-input" placeholder="Paste video URL (YouTube, Instagram, TikTok)..."
-                        spellcheck="false">
-                    <button id="validate-btn" onclick="App.validateUrl()">Validate</button>
+    <main class="main-layout">
+        <!-- Floating Video Preview (appears after validation) -->
+        <aside class="video-sidebar hidden" id="video-sidebar">
+            <div class="video-preview-sticky">
+                <div id="crop-container">
+                    <video id="crop-video" loop muted playsinline></video>
+                    <div id="crop-overlay" class="hidden"></div>
                 </div>
-                <div id="video-info" class="hidden">
-                    <p class="info-label">Title: <span id="video-title"></span></p>
-                    <p class="info-label">Duration: <span id="video-duration"></span></p>
+                <div class="preview-controls">
+                    <button id="preview-play-btn" class="control-btn">▶ Play</button>
+                    <button id="preview-mute-btn" class="control-btn">🔇 Unmute</button>
                 </div>
-                <div id="step1-error" class="error-msg hidden"></div>
+                <div class="volume-control">
+                    <span class="volume-icon">🔊</span>
+                    <input type="range" id="volume-slider" min="0" max="100" value="50" step="1">
+                    <span id="volume-value" class="volume-value">50%</span>
+                </div>
             </div>
-        </section>
+        </aside>
 
-        <!-- Step 2: Timestamps -->
-        <section class="step disabled" id="step-2">
-            <h2><span class="step-num">2</span> Timestamps</h2>
-            <div class="step-content">
-                <div class="input-row">
-                    <label>
-                        Start
-                        <input type="text" id="start-input" placeholder="0:00" class="time-input">
-                    </label>
-                    <label>
-                        End
-                        <input type="text" id="end-input" placeholder="0:15" class="time-input">
-                    </label>
-                    <span id="clip-duration" class="info-label"></span>
+        <!-- Workflow Steps -->
+        <div class="workflow-steps">
+            <!-- Step 1: Video Source -->
+            <section class="step" id="step-1">
+                <h2><span class="step-num">1</span> Video Source</h2>
+                <div class="step-content">
+                    <!-- Source type toggle -->
+                    <div class="source-toggle">
+                        <button class="source-btn active" id="source-url-btn" onclick="App.setSourceType('url')">URL</button>
+                        <button class="source-btn" id="source-file-btn" onclick="App.setSourceType('file')">Local File</button>
+                    </div>
+
+                    <!-- URL input section -->
+                    <div id="url-source-section">
+                        <div class="input-row">
+                            <input type="text" id="url-input" placeholder="Paste video URL (YouTube, Instagram, TikTok)..."
+                                spellcheck="false">
+                            <button id="validate-btn" onclick="App.validateUrl()">Load Video</button>
+                        </div>
+                    </div>
+
+                    <!-- File input section -->
+                    <div id="file-source-section" class="hidden">
+                        <div class="file-upload-area" id="file-drop-zone">
+                            <input type="file" id="local-video-input" accept="video/*" class="hidden">
+                            <div class="file-upload-content">
+                                <span class="file-upload-icon">📁</span>
+                                <p>Drag & drop video file here</p>
+                                <p class="file-upload-hint">or <button type="button" class="link-btn" onclick="document.getElementById('local-video-input').click()">browse files</button></p>
+                            </div>
+                        </div>
+                        <div id="selected-file-info" class="hidden">
+                            <p class="info-label">File: <span id="selected-file-name"></span></p>
+                        </div>
+                    </div>
+
+                    <div id="video-info" class="hidden">
+                        <p class="info-label">Title: <span id="video-title"></span></p>
+                        <p class="info-label">Duration: <span id="video-duration"></span></p>
+                    </div>
+                    <div id="download-status" class="hidden">
+                        <span class="spinner"></span> <span id="download-status-text">Downloading...</span>
+                    </div>
+                    <div id="step1-error" class="error-msg hidden"></div>
                 </div>
+            </section>
 
-                <!-- Separate Audio Source Toggle -->
-                <div class="audio-source-toggle">
-                    <label class="toggle-label">
-                        <input type="checkbox" id="use-separate-audio">
-                        <span class="toggle-text">Use separate audio source</span>
-                    </label>
-                </div>
-
-                <!-- Static Image Toggle -->
-                <div class="audio-source-toggle">
-                    <label class="toggle-label">
-                        <input type="checkbox" id="use-static-image">
-                        <span class="toggle-text">Use static image with audio only</span>
-                    </label>
-                </div>
-
-                <!-- Static Image Upload Section (hidden by default) -->
-                <div id="static-image-section" class="hidden audio-source-section">
-                    <div class="audio-source-header">
-                        <span class="audio-icon">🖼️</span>
-                        <span>Static Image</span>
-                    </div>
-                    <div class="input-row">
-                        <input type="file" id="static-image-input" accept="image/*">
-                    </div>
-                    <div id="image-preview-container" class="hidden">
-                        <img id="static-image-preview" alt="Preview">
-                    </div>
-                </div>
-
-                <!-- Separate Audio Source Section (hidden by default) -->
-                <div id="audio-source-section" class="hidden audio-source-section">
-                    <div class="audio-source-header">
-                        <span class="audio-icon">🎵</span>
-                        <span>Audio Source</span>
-                    </div>
-                    <div class="input-row">
-                        <input type="text" id="audio-url-input" placeholder="Paste video URL for audio..."
-                            spellcheck="false">
-                        <button id="validate-audio-btn" onclick="App.validateAudioUrl()">Validate</button>
-                    </div>
-                    <div id="audio-video-info" class="hidden">
-                        <p class="info-label">Title: <span id="audio-video-title"></span></p>
-                        <p class="info-label">Duration: <span id="audio-video-duration"></span></p>
-                    </div>
-                    <div class="input-row">
-                        <label>
-                            Audio Start
-                            <input type="text" id="audio-start-input" placeholder="0:00" class="time-input">
+            <!-- Step 2: Additional Options -->
+            <section class="step disabled" id="step-2">
+                <h2><span class="step-num">2</span> Options <span class="step-optional">(optional)</span></h2>
+                <div class="step-content">
+                    <!-- Separate Audio Source Toggle -->
+                    <div class="audio-source-toggle">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="use-separate-audio">
+                            <span class="toggle-text">Use separate audio source</span>
                         </label>
-                        <label>
-                            Audio End
-                            <input type="text" id="audio-end-input" placeholder="0:15" class="time-input">
+                    </div>
+
+                    <!-- Separate Audio Source Section (hidden by default) -->
+                    <div id="audio-source-section" class="hidden audio-source-section">
+                        <div class="audio-source-header">
+                            <span class="audio-icon">🎵</span>
+                            <span>Audio Source</span>
+                        </div>
+                        <div class="input-row">
+                            <input type="text" id="audio-url-input" placeholder="Paste video URL for audio..."
+                                spellcheck="false">
+                            <button id="validate-audio-btn" onclick="App.validateAudioUrl()">Validate</button>
+                        </div>
+                        <div id="audio-video-info" class="hidden">
+                            <p class="info-label">Title: <span id="audio-video-title"></span></p>
+                            <p class="info-label">Duration: <span id="audio-video-duration"></span></p>
+                        </div>
+                        <div class="input-row">
+                            <label>
+                                Audio Start
+                                <input type="text" id="audio-start-input" placeholder="0:00" class="time-input">
+                            </label>
+                            <label>
+                                Audio End
+                                <input type="text" id="audio-end-input" placeholder="0:15" class="time-input">
+                            </label>
+                            <span id="audio-clip-duration" class="info-label"></span>
+                        </div>
+                        <div id="audio-url-error" class="error-msg hidden"></div>
+                    </div>
+
+                    <!-- Static Image Toggle -->
+                    <div class="audio-source-toggle">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="use-static-image">
+                            <span class="toggle-text">Use static image with audio only</span>
                         </label>
-                        <span id="audio-clip-duration" class="info-label"></span>
                     </div>
-                    <div id="audio-url-error" class="error-msg hidden"></div>
-                </div>
 
-                <div class="input-row" style="margin-top: 1rem;">
-                    <button id="download-btn" onclick="App.downloadClip()">Download Clip</button>
-                </div>
-                <div id="download-status" class="hidden">
-                    <span class="spinner"></span> <span id="download-status-text">Downloading...</span>
-                </div>
-                <div id="step2-error" class="error-msg hidden"></div>
-            </div>
-        </section>
-
-        <!-- Step 3: Crop Preview -->
-        <section class="step disabled" id="step-3">
-            <h2><span class="step-num">3</span> Crop Preview</h2>
-            <div class="step-content">
-                <div id="crop-wrapper">
-                    <div id="crop-container">
-                        <div id="crop-placeholder">
-                            <div class="placeholder-content">
-                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                                    style="margin-bottom: 12px; color: var(--text-muted);">
-                                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                                    <line x1="8" y1="21" x2="16" y2="21"></line>
-                                    <line x1="12" y1="17" x2="12" y2="21"></line>
-                                </svg>
-                                <span>Enter video URL and timestamps to verify preview</span>
-                            </div>
+                    <!-- Static Image Upload Section (hidden by default) -->
+                    <div id="static-image-section" class="hidden audio-source-section">
+                        <div class="audio-source-header">
+                            <span class="audio-icon">🖼️</span>
+                            <span>Static Image</span>
                         </div>
-                        <video id="crop-video" class="hidden" loop muted playsinline></video>
-                        <div id="crop-overlay" class="hidden"></div>
-                    </div>
-                </div>
-                <div class="crop-controls">
-                    <div class="ratio-row">
-                        <span class="slider-label">Ratio</span>
-                        <div class="ratio-buttons" id="ratio-buttons">
-                            <button class="ratio-btn active" data-ratio="1:1">1:1</button>
-                            <button class="ratio-btn" data-ratio="16:9">16:9</button>
-                            <button class="ratio-btn" data-ratio="9:16">9:16</button>
-                            <button class="ratio-btn" data-ratio="4:3">4:3</button>
-                            <button class="ratio-btn" data-ratio="3:4">3:4</button>
-                            <button class="ratio-btn" data-ratio="21:9">21:9</button>
+                        <div class="input-row">
+                            <input type="file" id="static-image-input" accept="image/*">
+                        </div>
+                        <div id="image-preview-container" class="hidden">
+                            <img id="static-image-preview" alt="Preview">
                         </div>
                     </div>
-                    <div class="slider-row control-row">
-                        <button id="preview-play-btn" class="control-btn">▶ Play</button>
-                        <button id="preview-mute-btn" class="control-btn">🔇 Unmute</button>
-                    </div>
-                </div>
 
-                <!-- Trim Controls - iPhone Style -->
-                <div class="trim-controls">
-                    <div class="filmstrip-trimmer">
-                        <div class="filmstrip-container" id="filmstrip-container">
-                            <div class="filmstrip-track" id="filmstrip-track">
-                                <!-- Thumbnails will be generated here -->
+                    <div id="step2-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+
+            <!-- Step 3: Crop & Trim -->
+            <section class="step disabled" id="step-3">
+                <h2><span class="step-num">3</span> Crop &amp; Trim</h2>
+                <div class="step-content">
+                    <div class="crop-controls">
+                        <div class="ratio-row">
+                            <span class="slider-label">Ratio</span>
+                            <div class="ratio-buttons" id="ratio-buttons">
+                                <button class="ratio-btn active" data-ratio="1:1">1:1</button>
+                                <button class="ratio-btn" data-ratio="16:9">16:9</button>
+                                <button class="ratio-btn" data-ratio="9:16">9:16</button>
+                                <button class="ratio-btn" data-ratio="4:3">4:3</button>
+                                <button class="ratio-btn" data-ratio="3:4">3:4</button>
+                                <button class="ratio-btn" data-ratio="21:9">21:9</button>
                             </div>
-                            <div class="trim-selection" id="trim-selection">
-                                <div class="trim-handle trim-handle-left" id="trim-handle-left">
-                                    <div class="handle-chevron">‹</div>
-                                </div>
-                                <div class="trim-handle trim-handle-right" id="trim-handle-right">
-                                    <div class="handle-chevron">›</div>
-                                </div>
-                                <div class="playhead" id="playhead"></div>
-                            </div>
-                            <div class="trim-overlay-left" id="trim-overlay-left"></div>
-                            <div class="trim-overlay-right" id="trim-overlay-right"></div>
                         </div>
                     </div>
-                    <div class="trim-time-display">
-                        <span id="trim-start-val">0:00</span>
-                        <span class="trim-duration" id="trim-duration">Duration: 0:00</span>
-                        <span id="trim-end-val">0:00</span>
-                    </div>
-                </div>
 
-                <div class="slider-row">
-                    <span class="slider-label">Zoom</span>
-                    <label>
-                        <input type="range" id="zoom-slider" min="10" max="100" value="100" step="1">
-                    </label>
-                    <span id="zoom-value" class="slider-value">100%</span>
-                </div>
-                <p id="crop-coords" class="info-label">Crop: X=0 Y=0</p>
-            </div>
-            </div>
-        </section>
-
-        <!-- Step 4: Process & Export -->
-        <section class="step disabled" id="step-4">
-            <h2><span class="step-num">4</span> Process &amp; Export</h2>
-            <div class="step-content">
-                <button id="process-btn" onclick="App.processVideo()">Process Video</button>
-                <div id="progress-section" class="hidden">
-                    <div class="progress-bar-bg">
-                        <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                    <div class="slider-row">
+                        <span class="slider-label">Zoom</span>
+                        <label>
+                            <input type="range" id="zoom-slider" min="10" max="100" value="100" step="1">
+                        </label>
+                        <span id="zoom-value" class="slider-value">100%</span>
                     </div>
-                    <p id="progress-text" class="info-label">Starting...</p>
+
+                    <!-- Basic Trim Sliders -->
+                    <div class="trim-controls">
+                        <div class="trim-slider-row">
+                            <label class="trim-label">
+                                <span>Trim Start</span>
+                                <input type="range" id="trim-start-slider" min="0" max="100" value="0" step="0.1">
+                                <span id="trim-start-val" class="trim-val">0:00</span>
+                            </label>
+                        </div>
+                        <div class="trim-slider-row">
+                            <label class="trim-label">
+                                <span>Trim End</span>
+                                <input type="range" id="trim-end-slider" min="0" max="100" value="100" step="0.1">
+                                <span id="trim-end-val" class="trim-val">0:00</span>
+                            </label>
+                        </div>
+                        <div class="trim-duration-display">
+                            <span id="trim-duration">Duration: 0:00</span>
+                        </div>
+                    </div>
+
+                    <p id="crop-coords" class="info-label">Crop: X=0 Y=0</p>
                 </div>
-                <div id="download-section" class="hidden">
-                    <button id="export-btn" class="export-btn" onclick="App.downloadResult()">Download Alert</button>
+            </section>
+
+            <!-- Step 4: Process & Export -->
+            <section class="step disabled" id="step-4">
+                <h2><span class="step-num">4</span> Process &amp; Export</h2>
+                <div class="step-content">
+                    <button id="process-btn" onclick="App.processVideo()">Process Video</button>
+                    <div id="progress-section" class="hidden">
+                        <div class="progress-bar-bg">
+                            <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-text" class="info-label">Starting...</p>
+                    </div>
+                    <div id="download-section" class="hidden">
+                        <button id="export-btn" class="export-btn" onclick="App.downloadResult()">Download Alert</button>
+                    </div>
+                    <div id="step4-error" class="error-msg hidden"></div>
                 </div>
-                <div id="step4-error" class="error-msg hidden"></div>
-            </div>
-        </section>
+            </section>
+        </div>
     </main>
 
     <script src="/static/js/crop.js"></script>
-    <script src="/static/js/trimmer.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 

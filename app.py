@@ -423,6 +423,68 @@ def download_clip():
     return jsonify({"job_id": job_id, "status": "downloading"})
 
 
+# ── Upload local video ───────────────────────────────────────────
+
+@app.route("/api/upload-video", methods=["POST"])
+def upload_video():
+    """Handle local video file upload."""
+    if 'video' not in request.files:
+        return jsonify({"error": "No video file provided"}), 400
+
+    file = request.files['video']
+    if not file.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    # Check file extension
+    allowed_extensions = {'mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'm4v'}
+    ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    if ext not in allowed_extensions:
+        return jsonify({"error": f"Unsupported file format. Allowed: {', '.join(allowed_extensions)}"}), 400
+
+    job_id = uuid.uuid4().hex[:8]
+    job_dir = DOWNLOADS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save the uploaded file
+    save_path = job_dir / f"clip.{ext}"
+    file.save(str(save_path))
+
+    jobs[job_id] = {"status": "uploading", "progress": 50, "stage": "Processing upload..."}
+    print(f"Upload job {job_id}: saved {file.filename}")
+
+    # Get video duration using ffprobe
+    try:
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": 15,
+            "env": get_env()
+        }
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+        r = subprocess.run(
+            [FFPROBE, "-v", "quiet", "-print_format", "json",
+             "-show_format", str(save_path)],
+            **kwargs
+        )
+        info = json.loads(r.stdout)
+        duration = float(info.get("format", {}).get("duration", 0))
+    except Exception as e:
+        print(f"Error getting video info: {e}")
+        duration = 0
+
+    jobs[job_id] = {"status": "downloaded", "filename": f"clip.{ext}"}
+    print(f"Upload job {job_id} complete: clip.{ext}, duration: {duration}s")
+
+    return jsonify({
+        "job_id": job_id,
+        "filename": f"clip.{ext}",
+        "duration": duration,
+        "status": "downloaded"
+    })
+
+
 # ── Video info ──────────────────────────────────────────────────
 
 @app.route("/api/video-info/<job_id>")
