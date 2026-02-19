@@ -106,6 +106,14 @@ def get_env():
     return env
 
 
+def is_safe_job_id(job_id):
+    """Validate that job_id is safe for path construction (prevents path traversal)."""
+    if not job_id or not isinstance(job_id, str):
+        return False
+    # Only allow alphanumeric, underscore, and hyphen characters
+    return bool(re.match(r'^[a-zA-Z0-9_\-]+$', job_id))
+
+
 def run_subprocess(cmd, timeout=30, text=True):
     """Run a subprocess with proper flags to avoid popping up console windows on Windows."""
     kwargs = {
@@ -491,6 +499,8 @@ def upload_video():
 
 @app.route("/api/video-info/<job_id>")
 def video_info(job_id):
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     job_dir = DOWNLOADS_DIR / job_id
     files = list(job_dir.glob("clip.*"))
     if not files:
@@ -551,6 +561,8 @@ def video_info(job_id):
 def preview_frame():
     data = request.get_json()
     job_id = data.get("job_id", "")
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     timestamp = float(data.get("timestamp", 0))
 
     job_dir = DOWNLOADS_DIR / job_id
@@ -926,8 +938,8 @@ def process_video():
     buffer_duration = int(settings.get("bufferDuration", "2"))
     normalize_audio = settings.get("normalizeAudio", True)
 
-    if not job_id:
-        return jsonify({"error": "Missing job_id"}), 400
+    if not job_id or not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
         
     # Handle image upload if present
     if use_static_image and 'static_image' in request.files:
@@ -959,6 +971,8 @@ def process_video():
 
 @app.route("/api/status/<job_id>")
 def job_status(job_id):
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     if job_id not in jobs:
         return jsonify({"status": "unknown"}), 404
     return jsonify(jobs[job_id])
@@ -968,6 +982,8 @@ def job_status(job_id):
 
 @app.route("/api/download-result/<job_id>")
 def download_result(job_id):
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     filename = f"alert_{job_id}.mp4"
     filepath = OUTPUT_DIR / filename
     if not filepath.exists():
@@ -979,6 +995,8 @@ def download_result(job_id):
 
 @app.route("/api/serve-clip/<job_id>")
 def serve_clip(job_id):
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     job_dir = DOWNLOADS_DIR / job_id
     files = list(job_dir.glob("clip.*"))
     if not files:
@@ -991,6 +1009,8 @@ def serve_clip(job_id):
 
 @app.route("/api/cleanup/<job_id>", methods=["POST"])
 def cleanup(job_id):
+    if not is_safe_job_id(job_id):
+        return jsonify({"error": "Invalid job_id"}), 400
     import shutil
     for d in [DOWNLOADS_DIR / job_id, PROCESSING_DIR / job_id]:
         if d.exists():
