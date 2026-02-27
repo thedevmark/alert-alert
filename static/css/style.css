@@ -57,34 +57,7 @@ header h1 {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
     justify-content: flex-end;
-}
-
-button.header-chip-btn {
-    background: rgba(132, 152, 176, 0.1);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1;
-    letter-spacing: 0.2px;
-    transition: all 0.2s;
-}
-
-button.header-chip-btn:hover:not(:disabled) {
-    background: rgba(132, 152, 176, 0.2);
-    color: var(--text);
-    border-color: var(--accent);
-    transform: none;
-}
-
-button.header-chip-btn.active {
-    background: rgba(132, 152, 176, 0.22);
-    border-color: var(--accent);
-    color: var(--text);
 }
 
 .settings-section {
@@ -309,6 +282,16 @@ main {
     text-decoration: underline;
 }
 
+.footer-heart {
+    color: var(--error);
+    font-weight: 700;
+}
+
+.app-footer-meta {
+    margin-left: auto;
+    text-align: right;
+}
+
 .main-layout {
     display: flex;
     gap: 24px;
@@ -416,6 +399,11 @@ main {
         padding: 12px 16px;
         flex-direction: column;
         gap: 6px;
+    }
+
+    .app-footer-meta {
+        margin-left: 0;
+        text-align: left;
     }
 
     .main-layout {
@@ -1156,15 +1144,64 @@ input[type="file"]::file-selector-button {
     margin-bottom: 10px;
 }
 
-.workflow-settings-panel {
+.setting-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(132, 152, 176, 0.1);
     border: 1px solid var(--border);
-    background: rgba(132, 152, 176, 0.08);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 12px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.2px;
 }
 
-#app-controls-panel {
-    display: grid;
-    gap: 8px;
+.setting-pill:hover:not(:disabled) {
+    background: rgba(132, 152, 176, 0.2);
+    border-color: var(--accent);
+    color: var(--text);
+    transform: none;
+}
+
+.setting-pill .pill-label {
+    color: var(--text-muted);
+}
+
+.setting-pill .pill-value {
+    color: var(--text);
+}
+
+.setting-pill .pill-caret {
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.setting-pill.active .pill-caret {
+    transform: rotate(180deg);
+}
+
+.workflow-settings-panel {
+    border: 1px solid transparent;
+    background: rgba(132, 152, 176, 0.04);
+    border-radius: 8px;
+    padding: 0 12px;
+    margin-bottom: 0;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition: max-height 0.28s ease, opacity 0.22s ease, padding 0.22s ease, margin 0.22s ease, border-color 0.22s ease;
+}
+
+.workflow-settings-panel.open {
+    border-color: var(--border);
+    background: rgba(132, 152, 176, 0.08);
+    padding: 12px;
+    margin-bottom: 12px;
+    max-height: 1200px;
+    opacity: 1;
+    pointer-events: auto;
 }

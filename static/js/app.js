@@ -300,23 +300,26 @@ const App = (() => {
         show(banner);
     }
 
+    function setPanelOpen(panelId, isOpen) {
+        const panel = $(panelId);
+        if (!panel) return;
+        panel.classList.toggle("open", !!isOpen);
+        document.querySelectorAll(`[data-panel="${panelId}"]`).forEach((trigger) => {
+            trigger.classList.toggle("active", !!isOpen);
+        });
+    }
+
     function toggleSettingsPanel(panelId) {
         const panel = $(panelId);
         if (!panel) return;
-        panel.classList.toggle("hidden");
-        const isOpen = !panel.classList.contains("hidden");
-        document.querySelectorAll(`[onclick*="${panelId}"]`).forEach((trigger) => {
-            trigger.classList.toggle("active", isOpen);
-        });
+        const shouldOpen = !panel.classList.contains("open");
+        setPanelOpen(panelId, shouldOpen);
     }
 
     function openSettingsPanel(panelId, stepId = "") {
         const panel = $(panelId);
         if (!panel) return;
-        show(panel);
-        document.querySelectorAll(`[onclick*="${panelId}"]`).forEach((trigger) => {
-            trigger.classList.add("active");
-        });
+        setPanelOpen(panelId, true);
 
         const step = stepId ? $(stepId) : panel.closest(".step");
         if (step) {
@@ -334,16 +337,17 @@ const App = (() => {
     }
 
     function updateSettingsPanelLabels(settings = getSettings()) {
-        const outputToggle = $("output-settings-toggle");
-        const audioToggle = $("audio-settings-toggle");
-        if (outputToggle) {
+        const outputPillValue = $("output-pill-value");
+        const audioPillValue = $("audio-pill-value");
+        if (outputPillValue) {
             const bufferValue = String(settings.bufferDuration || "2");
-            const bufferLabel = bufferValue === "0" ? "No buffer" : `Buffer ${bufferValue}s`;
-            outputToggle.textContent = `Output Settings (${settings.resolution}p, ${bufferLabel})`;
+            outputPillValue.textContent = bufferValue === "0"
+                ? `${settings.resolution}p · No buffer`
+                : `${settings.resolution}p · Buffer ${bufferValue}s`;
         }
-        if (audioToggle) {
+        if (audioPillValue) {
             const normalizeLabel = settings.normalizeAudio ? "Normalize On" : "Normalize Off";
-            audioToggle.textContent = `Audio Processing Settings (${normalizeLabel}, ${settings.audioFadeDuration}s fade)`;
+            audioPillValue.textContent = `${normalizeLabel} · ${settings.audioFadeDuration}s`;
         }
         updateAudioFadeNote(settings);
     }
@@ -394,11 +398,19 @@ const App = (() => {
             installBtn.disabled = dependencyInstallInFlight;
         }
 
+        const depPillValue = $("dependency-pill-value");
+        if (depPillValue) {
+            if (deps.bootstrap?.status === "installing") {
+                depPillValue.textContent = "Installing...";
+            } else if (missing.length === 0) {
+                depPillValue.textContent = "Ready";
+            } else {
+                depPillValue.textContent = `Needs Setup (${missing.length})`;
+            }
+        }
+
         if (missing.length > 0) {
-            show("dependency-settings-panel");
-            document.querySelectorAll(`[onclick*="dependency-settings-panel"]`).forEach((trigger) => {
-                trigger.classList.add("active");
-            });
+            setPanelOpen("dependency-settings-panel", true);
             const bootstrapMessage = deps.bootstrap?.message || "";
             const bootstrapError = deps.bootstrap?.last_error || "";
             const extra = bootstrapError
@@ -1517,10 +1529,22 @@ const App = (() => {
         saveSettings();
 
         // Visual feedback
-        const btn = $("reset-settings-btn");
+        const btn = $("reset-settings-btn") || $("navbar-reset-btn");
         if (!btn) return;
         btn.textContent = "Reset!";
-        setTimeout(() => btn.textContent = "Reset to Defaults", 1000);
+        setTimeout(() => {
+            const labelEl = btn.querySelector(".pill-label");
+            if (labelEl) {
+                labelEl.textContent = "Reset to Defaults";
+            } else {
+                btn.textContent = "Reset to Defaults";
+            }
+        }, 1000);
+
+        const labelEl = btn.querySelector(".pill-label");
+        if (labelEl) {
+            labelEl.textContent = "Reset!";
+        }
     }
 
     async function shutdownApp() {

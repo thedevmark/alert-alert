@@ -6,9 +6,9 @@
 /_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
 ```
 
-**The production-ready desktop tool for creating stream alerts from YouTube, Instagram, and TikTok clips.**
+**The production-ready desktop tool for creating stream alerts from YouTube, Instagram, TikTok, and local files.**
 
-Download clips, trim and crop with precision, apply audio options, and export polished alert videos quickly with a workflow built for one-click reliability.
+Download clips or load local media, trim and crop with precision, apply audio options, and export polished alert videos quickly with a workflow built for one-click reliability.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Backend-green?logo=flask&logoColor=white)
@@ -53,10 +53,12 @@ Download clips, trim and crop with precision, apply audio options, and export po
 You need **Python 3.10 or newer** to run or build this project.
 
 ### EXE Dependency Behavior (One-Click)
-- On Windows, `AlertAlert.exe` auto-checks dependencies at launch.
+- On Windows, `alert-alert.exe` auto-checks dependencies at launch.
 - If `ffmpeg`, `ffprobe`, or `yt-dlp` are missing, the app downloads them into a user-local runtime folder (no admin required).
 - Manual fallback remains available in **Step 1 > Dependency Setup & Troubleshooting**.
 - Auto-install requires outbound internet access to GitHub and FFmpeg mirrors.
+- `deno` is **optional** and only helps `yt-dlp` handle certain advanced YouTube challenge/protection scenarios.
+- Without `deno`, local files and most URLs still work normally. Installing `deno` mainly improves success rate on some harder YouTube cases.
 
 ### Step-by-Step Installation Guide (For Beginners)
 
@@ -84,7 +86,7 @@ If you are new to installing developer tools, follow these steps exactly:
    ```cmd
    pip install -U yt-dlp
    ```
-2. Restart your computer, then launch `AlertAlert.exe` again.
+2. Restart your computer, then launch `alert-alert.exe` again.
 
 #### 4. Troubleshooting
 If you see errors like `'pip' is not recognized` or `'winget' is not recognized`:
@@ -105,7 +107,7 @@ pip install -r requirements.txt
 
 ### Option 1: Download the EXE (Recommended)
 
-1. Download `AlertAlert.exe` from [Releases](https://github.com/thedeutschmark/alert-alert/releases)
+1. Download `alert-alert.exe` from [Releases](https://github.com/thedeutschmark/alert-alert/releases)
 2. Double-click to run
 3. On first launch, the app may briefly auto-install missing dependencies
 4. Browser opens automatically to the app interface
@@ -175,7 +177,7 @@ To build your own executable:
 
 ```bash
 pip install pyinstaller
-python -m PyInstaller --name "AlertAlert" --add-data "static;static" --icon=static/favicon.ico --clean --onefile app.py
+python -m PyInstaller --name "alert-alert" --add-data "static;static" --icon=static/favicon.ico --clean --onefile app.py
 ```
 
 The output is generated in the `dist/` folder.
@@ -201,9 +203,10 @@ pip install -U yt-dlp
 - Ensure the URL is a direct video link (not a playlist)
 - The app auto-cleans YouTube playlist/radio params
 - If YouTube protection blocks formats, update yt-dlp and retry
+- If protected YouTube URLs keep failing, install optional `deno` (`winget install DenoLand.Deno`) and retry
 
 ### Port 5000 already in use
-Another application is already using port 5000. Close it and restart AlertAlert.
+Another application is already using port 5000. Close it and restart Alert! Alert!.
 
 ### Auto-install fails repeatedly
 - Verify internet connectivity and retry from Step 1

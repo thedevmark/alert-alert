@@ -38,7 +38,7 @@ OUTPUT_DIR = BASE_DIR / "output"
 if platform.system() == "Windows":
     local_app_data = os.environ.get("LOCALAPPDATA")
     runtime_root_base = Path(local_app_data) if local_app_data else BASE_DIR
-    RUNTIME_DIR = runtime_root_base / "AlertAlert" / "runtime"
+    RUNTIME_DIR = runtime_root_base / "alert-alert" / "runtime"
 else:
     RUNTIME_DIR = BASE_DIR / ".runtime"
 RUNTIME_BIN_DIR = RUNTIME_DIR / "bin"
@@ -220,7 +220,7 @@ def _build_deps_payload(results):
 
 
 def _download_file(url, dest_path, timeout=180):
-    req = Request(url, headers={"User-Agent": "AlertAlert/1.0"})
+    req = Request(url, headers={"User-Agent": "alert-alert/1.0"})
     with urlopen(req, timeout=timeout) as response, open(dest_path, "wb") as out_file:
         shutil.copyfileobj(response, out_file)
 

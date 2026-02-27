@@ -3,8 +3,8 @@ setlocal EnableExtensions
 REM Build script for deutschmark's Alert Creator
 REM Creates a standalone EXE using PyInstaller
 
-set "EXE_PATH=dist\Alert! Alert!.exe"
-set "EXE_NAME=Alert! Alert!.exe"
+set "EXE_PATH=dist\alert-alert.exe"
+set "EXE_NAME=alert-alert.exe"
 
 echo ========================================
 echo deutschmark's Alert Creator - Build EXE
@@ -66,7 +66,7 @@ echo.
 echo ========================================
 echo Build complete!
 echo.
-echo EXE location: dist\Alert! Alert!.exe
+echo EXE location: dist\alert-alert.exe
 echo.
 echo NOTE: EXE now auto-installs missing FFmpeg/yt-dlp at runtime.
 echo Manual fallback (if needed):

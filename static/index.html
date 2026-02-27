@@ -14,12 +14,15 @@
             <h1 class="logo-text">Alert<span class="ascii-bang" id="ascii-bang-1">!</span> Alert<span class="ascii-bang" id="ascii-bang-2">!</span></h1>
         </div>
         <div class="header-actions">
-            <button class="header-chip-btn" type="button"
-                onclick="App.openSettingsPanel('dependency-settings-panel', 'step-1')">Dependencies</button>
-            <button class="header-chip-btn" type="button"
-                onclick="App.openSettingsPanel('audio-settings-panel', 'step-2')">Audio Settings</button>
-            <button class="header-chip-btn" type="button"
-                onclick="App.openSettingsPanel('output-settings-panel', 'step-4')">Output Settings</button>
+            <button id="dependency-settings-toggle" class="setting-pill" type="button" data-panel="dependency-settings-panel"
+                onclick="App.openSettingsPanel('dependency-settings-panel', 'step-1')">
+                <span class="pill-label">Dependency Setup</span>
+                <span id="dependency-pill-value" class="pill-value">Checking...</span>
+                <span class="pill-caret">▾</span>
+            </button>
+            <button id="navbar-reset-btn" class="setting-pill" type="button" onclick="App.resetSettings()">
+                <span class="pill-label">Reset to Defaults</span>
+            </button>
         </div>
     </header>
 
@@ -95,12 +98,7 @@
                         <span class="spinner"></span> <span id="download-status-text">Downloading...</span>
                     </div>
 
-                    <div class="settings-launch-row">
-                        <button id="dependency-settings-toggle" class="header-chip-btn" type="button"
-                            onclick="App.toggleSettingsPanel('dependency-settings-panel')">Dependency Setup &amp; Troubleshooting</button>
-                    </div>
-
-                    <div id="dependency-settings-panel" class="workflow-settings-panel hidden">
+                    <div id="dependency-settings-panel" class="workflow-settings-panel">
                         <div class="settings-section">
                             <label class="settings-label">Runtime Dependencies</label>
                             <div class="dep-links">
@@ -141,14 +139,18 @@
 
             <!-- Step 2: Additional Options -->
             <section class="step disabled" id="step-2">
-                <h2><span class="step-num">2</span> Options <span class="step-optional">(optional)</span></h2>
+                <h2><span class="step-num">2</span> Options</h2>
                 <div class="step-content">
                     <div class="settings-launch-row">
-                        <button id="audio-settings-toggle" class="header-chip-btn" type="button"
-                            onclick="App.toggleSettingsPanel('audio-settings-panel')">Audio Processing Settings</button>
+                        <button id="audio-settings-toggle" class="setting-pill" type="button" data-panel="audio-settings-panel"
+                            onclick="App.toggleSettingsPanel('audio-settings-panel')">
+                            <span class="pill-label">Audio Settings</span>
+                            <span id="audio-pill-value" class="pill-value">Normalize On · 0.35s</span>
+                            <span class="pill-caret">▾</span>
+                        </button>
                     </div>
 
-                    <div id="audio-settings-panel" class="workflow-settings-panel hidden">
+                    <div id="audio-settings-panel" class="workflow-settings-panel">
                         <div class="settings-section">
                             <label class="settings-label">
                                 Audio Normalization
@@ -325,13 +327,15 @@
                 <h2><span class="step-num">4</span> Process &amp; Export</h2>
                 <div class="step-content">
                     <div class="settings-launch-row">
-                        <button id="output-settings-toggle" class="header-chip-btn" type="button"
-                            onclick="App.toggleSettingsPanel('output-settings-panel')">Output Settings</button>
-                        <button class="header-chip-btn" type="button"
-                            onclick="App.toggleSettingsPanel('app-controls-panel')">App Controls</button>
+                        <button id="output-settings-toggle" class="setting-pill" type="button" data-panel="output-settings-panel"
+                            onclick="App.toggleSettingsPanel('output-settings-panel')">
+                            <span class="pill-label">Output</span>
+                            <span id="output-pill-value" class="pill-value">720p · Buffer 2s</span>
+                            <span class="pill-caret">▾</span>
+                        </button>
                     </div>
 
-                    <div id="output-settings-panel" class="workflow-settings-panel hidden">
+                    <div id="output-settings-panel" class="workflow-settings-panel">
                         <div class="settings-section">
                             <label class="settings-label">Output Resolution</label>
                             <select id="setting-resolution" class="settings-select">
@@ -356,11 +360,6 @@
                         </div>
                     </div>
 
-                    <div id="app-controls-panel" class="workflow-settings-panel hidden">
-                        <button id="reset-settings-btn" class="settings-reset" type="button" onclick="App.resetSettings()">Reset to Defaults</button>
-                        <button class="settings-quit" type="button" onclick="App.shutdownApp()">Quit App</button>
-                    </div>
-
                     <button id="process-btn" onclick="App.processVideo()">Process Video</button>
                     <div id="progress-section" class="hidden">
                         <div class="progress-bar-bg">
@@ -379,10 +378,13 @@
 
     <footer class="app-footer">
         <p>
-            Made with &lt;3 for streamers by
+            Made with <span class="footer-heart">&lt;3</span> for streamers by
             <a href="https://twitch.tv/thedeutschmark" target="_blank" rel="noopener noreferrer">thedeutschmark</a>
         </p>
-        <p>&copy; 2026 thedeutschmark. Released under the MIT License.</p>
+        <p class="app-footer-meta">
+            &copy; 2026 ·
+            <a href="https://github.com/thedeutschmark/alert-alert/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+        </p>
     </footer>
 
     <script src="/static/js/crop.js"></script>
