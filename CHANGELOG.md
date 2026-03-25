@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-27
+
+### Added
+- **Dependency Download Consent Gate**: First-run dependency downloads now require explicit user permission.
+  - Clear disclosure of install location and download sources before any auto-download begins.
+  - New manual-only path with opt-in retry via **Auto Install Missing**.
+- **Alternate Visual Source Support**: The visual override path now supports either an image or a video file.
+
+### Changed
+- **Dependency Setup UX**: Moved dependency setup into a top-right navbar dropdown for faster access.
+- **Runtime Installer Behavior**: On Windows, dependency bootstrap now attempts optional `deno` by default (after consent) while keeping app functionality intact if `deno` install fails.
+- **Audio/Visual Option Labels**:
+  - `Use separate audio source` -> `Use different audio with this video`
+  - `Use static image with audio only` -> `Use a different image or video with this audio`
+- **Audio Controls Layout**: `Normalize` and `Fade Length` are now grouped with `Audio Fade` in Step 3.
+
+### Fixed
+- Corrected dependency guidance text to reference **Dependency Setup (top-right)** instead of Step 1.
+- Improved processing validation and error messaging when alternate visual media is enabled but missing or unsupported.
+
 ## [1.2.0] - 2026-01-27
 
 ### Added

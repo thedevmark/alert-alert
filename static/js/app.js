@@ -3,6 +3,8 @@
  * Manages the 4-step workflow, API calls, and UI state.
  */
 const App = (() => {
+    const AUTO_DOWNLOAD_CONSENT_KEY = "alertCreatorAutoDownloadConsent";
+
     // State
     const DEFAULT_PREVIEW_VOLUME = 50;
     let videoUrl = "";
@@ -14,6 +16,8 @@ const App = (() => {
     let downloadableJobId = "";
     let dependencyInstallAttempted = false;
     let dependencyInstallInFlight = false;
+    let dependencyUpdateInFlight = false;
+    let dependencyDropdownCloseHandlersBound = false;
 
     // Audio source state
     let audioUrl = "";
@@ -30,6 +34,7 @@ const App = (() => {
     let useStaticImage = false;
     let staticImageFile = null;
     let staticImagePreviewUrl = "";
+    let staticImageSourceType = "image"; // "image" or "video"
 
     // Local video state
     let sourceType = "url"; // "url" or "file"
@@ -38,6 +43,7 @@ const App = (() => {
     // Trim state
     let trimStart = 0;
     let trimEnd = 0;
+    const AUDIO_TRIM_MIN_SPAN = 0.05;
 
     // ── Helpers ─────────────────────────────────────────────────
 
@@ -53,6 +59,13 @@ const App = (() => {
     function hide(el) {
         if (typeof el === "string") el = $(el);
         el.classList.add("hidden");
+    }
+
+    function clearAlternateVisualPreviewUrl() {
+        if (staticImageSourceType === "video" && staticImagePreviewUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(staticImagePreviewUrl);
+        }
+        staticImagePreviewUrl = "";
     }
 
     function enableStep(stepNum) {
@@ -102,25 +115,51 @@ const App = (() => {
     }
 
     function formatDuration(seconds) {
-        const m = Math.floor(seconds / 60);
-        const s = Math.floor(seconds % 60);
-        return `${m}:${s.toString().padStart(2, "0")}`;
+        const totalHundredths = Math.max(0, Math.round((Number(seconds) || 0) * 100));
+        const mins = Math.floor(totalHundredths / 6000);
+        const secs = Math.floor((totalHundredths % 6000) / 100);
+        const hundredths = totalHundredths % 100;
+        return `${mins}:${secs.toString().padStart(2, "0")}.${hundredths.toString().padStart(2, "0")}`;
     }
 
     /**
      * Parse timestamp string to seconds.
-     * Supports: "1:30", "1:30:00", "90" (as seconds), "1.5" (as seconds)
+     * Supports:
+     * - "1:30.25", "1:30", "1:30:00.50"
+     * - compact centiseconds like "0:012" (0m, 0.12s) or "0:1425" (0m, 14.25s)
+     * - "90" (as seconds), "1.5" (as seconds)
      */
     function parseTimestamp(ts) {
-        const trimmed = ts.trim();
+        const trimmed = String(ts || "").trim();
         if (!trimmed) return 0;
+
+        const parseSecondPart = (part) => {
+            const clean = String(part || "").trim();
+            if (!clean) return 0;
+            if (clean.includes(".")) return parseFloat(clean) || 0;
+            if (/^\d{3,4}$/.test(clean)) {
+                const whole = parseInt(clean.slice(0, -2) || "0", 10);
+                const hundredths = parseInt(clean.slice(-2), 10);
+                return whole + hundredths / 100;
+            }
+            return parseFloat(clean) || 0;
+        };
 
         // If contains colon, parse as time format
         if (trimmed.includes(":")) {
-            const parts = trimmed.split(":").map(Number);
-            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-            if (parts.length === 2) return parts[0] * 60 + parts[1];
-            return parts[0] || 0;
+            const parts = trimmed.split(":").map((p) => p.trim());
+            if (parts.length === 3) {
+                const hours = parseFloat(parts[0]) || 0;
+                const mins = parseFloat(parts[1]) || 0;
+                const secs = parseSecondPart(parts[2]);
+                return hours * 3600 + mins * 60 + secs;
+            }
+            if (parts.length === 2) {
+                const mins = parseFloat(parts[0]) || 0;
+                const secs = parseSecondPart(parts[1]);
+                return mins * 60 + secs;
+            }
+            return parseSecondPart(parts[0]);
         }
 
         // Otherwise treat as seconds
@@ -128,7 +167,7 @@ const App = (() => {
     }
 
     /**
-     * Format a timestamp input value to proper MM:SS or H:MM:SS format.
+     * Format a timestamp input value to MM:SS.hh precision.
      * Called on blur to auto-format user input.
      */
     function formatTimestampInput(input) {
@@ -137,19 +176,11 @@ const App = (() => {
 
         const seconds = parseTimestamp(value);
         if (isNaN(seconds) || seconds < 0) {
-            input.value = "0:00";
+            input.value = "0:00.00";
             return;
         }
 
-        const hours = Math.floor(seconds / 3600);
-        const mins = Math.floor((seconds % 3600) / 60);
-        const secs = Math.floor(seconds % 60);
-
-        if (hours > 0) {
-            input.value = `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-        } else {
-            input.value = `${mins}:${secs.toString().padStart(2, "0")}`;
-        }
+        input.value = formatDuration(seconds);
     }
 
     function getSeparateAudioElement() {
@@ -166,11 +197,11 @@ const App = (() => {
     }
 
     function getSeparateAudioStartSeconds() {
-        return parseTimestamp($("audio-start-input")?.value || "0:00");
+        return parseTimestamp($("audio-start-input")?.value || "0:00.00");
     }
 
     function getSeparateAudioEndSeconds() {
-        return parseTimestamp($("audio-end-input")?.value || "0:00");
+        return parseTimestamp($("audio-end-input")?.value || "0:00.00");
     }
 
     function clearLoadedSeparateAudioPreview() {
@@ -250,7 +281,9 @@ const App = (() => {
             audio.src = srcUrl;
             audio.load();
         });
+        audioDuration = Number(audio.duration || audioDuration || 0);
         separateAudioPreviewLoaded = true;
+        applySeparateAudioTrimConstraints("start", { syncPreview: false });
         updatePreviewAudioRouting();
         syncSeparateAudioWithVideo(true);
         onVolumeChange();
@@ -287,6 +320,61 @@ const App = (() => {
             ...options,
         });
         return resp.json();
+    }
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function getAutoDownloadConsent() {
+        try {
+            return localStorage.getItem(AUTO_DOWNLOAD_CONSENT_KEY) || "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function setAutoDownloadConsent(value) {
+        try {
+            localStorage.setItem(AUTO_DOWNLOAD_CONSENT_KEY, value);
+        } catch (e) {
+            // Ignore storage errors.
+        }
+    }
+
+    function buildDependencyDisclosureHtml(deps) {
+        const disclosure = deps?.download_disclosure || {};
+        const runtimePath = escapeHtml(disclosure.runtime_path || "your local app runtime folder");
+        const sources = disclosure.sources || {};
+        const ffmpegSource = escapeHtml(sources.ffmpeg || "FFmpeg mirror");
+        const ytdlpSource = escapeHtml(sources["yt-dlp"] || "yt-dlp releases");
+        const denoSource = escapeHtml(sources.deno || "Deno releases");
+        return [
+            "<strong>Before download:</strong> this app can save runtime tools on your computer.",
+            `<strong>Install location:</strong> <code>${runtimePath}</code>`,
+            "<strong>Tools:</strong> required ffmpeg/ffprobe + yt-dlp, optional deno",
+            `<strong>Sources:</strong><br><code>${ffmpegSource}</code><br><code>${ytdlpSource}</code><br><code>${denoSource}</code>`,
+        ].join("<br>");
+    }
+
+    function showAutoDownloadConsentPrompt(deps) {
+        setPanelOpen("dependency-settings-panel", true);
+        const actions = `
+            <div class="dep-choice-actions">
+                <button type="button" class="dep-choice-btn" onclick="App.allowDependencyAutoDownload()">Allow Auto-Download</button>
+                <button type="button" class="dep-choice-btn secondary-btn" onclick="App.useManualDependencySetup()">Manual Install Only</button>
+            </div>
+        `;
+        setDependencyBanner(
+            "<strong>Permission required:</strong> allow dependency downloads?",
+            `${buildDependencyDisclosureHtml(deps)}${actions}`,
+            false
+        );
     }
 
     function setDependencyBanner(messageHtml, instructionsHtml = "", showAsError = true) {
@@ -330,6 +418,28 @@ const App = (() => {
         }
     }
 
+    function bindDependencyDropdownCloseHandlers() {
+        if (dependencyDropdownCloseHandlersBound) return;
+        dependencyDropdownCloseHandlersBound = true;
+
+        document.addEventListener("click", (event) => {
+            const panel = $("dependency-settings-panel");
+            const toggleBtn = $("dependency-settings-toggle");
+            if (!panel || !toggleBtn || !panel.classList.contains("open")) return;
+
+            const target = event.target;
+            if (panel.contains(target) || toggleBtn.contains(target)) return;
+            setPanelOpen("dependency-settings-panel", false);
+        });
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            const panel = $("dependency-settings-panel");
+            if (!panel || !panel.classList.contains("open")) return;
+            setPanelOpen("dependency-settings-panel", false);
+        });
+    }
+
     function updateAudioFadeNote(settings = getSettings()) {
         const note = $("audio-fade-note");
         if (!note) return;
@@ -337,16 +447,9 @@ const App = (() => {
     }
 
     function updateSettingsPanelLabels(settings = getSettings()) {
-        const outputPillValue = $("output-pill-value");
         const audioPillValue = $("audio-pill-value");
-        if (outputPillValue) {
-            const bufferValue = String(settings.bufferDuration || "2");
-            outputPillValue.textContent = bufferValue === "0"
-                ? `${settings.resolution}p · No buffer`
-                : `${settings.resolution}p · Buffer ${bufferValue}s`;
-        }
         if (audioPillValue) {
-            const normalizeLabel = settings.normalizeAudio ? "Normalize On" : "Normalize Off";
+            const normalizeLabel = settings.normalizeAudio ? "Normalize Audio On" : "Normalize Audio Off";
             audioPillValue.textContent = `${normalizeLabel} · ${settings.audioFadeDuration}s`;
         }
         updateAudioFadeNote(settings);
@@ -360,6 +463,7 @@ const App = (() => {
         const ytdlpStatus = $("dep-ytdlp-status");
         const denoStatus = $("dep-deno-status");
         const installBtn = $("auto-install-deps-btn");
+        const updateBtn = $("update-ytdlp-btn");
 
         if (deps.ffmpeg?.installed && deps.ffprobe?.installed) {
             ffmpegStatus.textContent = "✓ Installed";
@@ -368,7 +472,7 @@ const App = (() => {
             ffmpegStatus.textContent = "✗ Missing";
             ffmpegStatus.className = "dep-status missing";
             missing.push("FFmpeg/ffprobe");
-            instructions.push("FFmpeg: Use Auto Install in Step 1. If needed, run 'winget install Gyan.FFmpeg'.");
+            instructions.push("FFmpeg: Use Auto Install in Dependency Setup (top-right). If needed, run 'winget install Gyan.FFmpeg'.");
         }
 
         if (deps["yt-dlp"]?.installed) {
@@ -378,7 +482,7 @@ const App = (() => {
             ytdlpStatus.textContent = "✗ Missing";
             ytdlpStatus.className = "dep-status missing";
             missing.push("yt-dlp");
-            instructions.push("yt-dlp: Use Auto Install in Step 1, or install manually.");
+            instructions.push("yt-dlp: Use Auto Install in Dependency Setup (top-right), or install manually.");
         }
 
         if (denoStatus) {
@@ -386,22 +490,37 @@ const App = (() => {
                 denoStatus.textContent = "✓ Installed";
                 denoStatus.className = "dep-status installed";
             } else {
-                denoStatus.textContent = "⚠ Optional";
+                denoStatus.textContent = "⚠ Optional (Missing)";
                 denoStatus.className = "dep-status missing";
-                instructions.push("Deno is optional. Install with 'winget install DenoLand.Deno' for better YouTube challenge handling.");
+                instructions.push("When auto-download is allowed, Deno install is attempted by default. If still missing, retry Auto Install or run 'winget install DenoLand.Deno' for better YouTube challenge handling.");
             }
         }
 
         if (installBtn) {
-            const shouldShowInstall = missing.length > 0 && deps.auto_install_available;
+            const shouldShowInstall = deps.auto_install_available && (missing.length > 0 || !deps.deno?.installed);
             installBtn.classList.toggle("hidden", !shouldShowInstall);
-            installBtn.disabled = dependencyInstallInFlight;
+            installBtn.disabled = dependencyInstallInFlight || dependencyUpdateInFlight || deps.ytdlp_update?.status === "updating";
+        }
+
+        if (updateBtn) {
+            const updateAvailable = !!deps.ytdlp_update_available;
+            const updateStatus = deps.ytdlp_update?.status || "idle";
+            updateBtn.classList.toggle("hidden", !updateAvailable);
+            updateBtn.disabled = dependencyUpdateInFlight
+                || updateStatus === "updating"
+                || dependencyInstallInFlight
+                || deps.bootstrap?.status === "installing";
+            updateBtn.textContent = updateStatus === "updating"
+                ? "Updating yt-dlp..."
+                : "Update yt-dlp (1-click)";
         }
 
         const depPillValue = $("dependency-pill-value");
         if (depPillValue) {
             if (deps.bootstrap?.status === "installing") {
                 depPillValue.textContent = "Installing...";
+            } else if (deps.ytdlp_update?.status === "updating") {
+                depPillValue.textContent = "Updating yt-dlp...";
             } else if (missing.length === 0) {
                 depPillValue.textContent = "Ready";
             } else {
@@ -429,6 +548,14 @@ const App = (() => {
     }
 
     async function installMissingDependencies(manual = false) {
+        const consent = getAutoDownloadConsent();
+        if (consent !== "allow") {
+            if (!manual) {
+                return;
+            }
+            setAutoDownloadConsent("allow");
+        }
+
         if (dependencyInstallInFlight) return;
         dependencyInstallInFlight = true;
         const installBtn = $("auto-install-deps-btn");
@@ -439,18 +566,20 @@ const App = (() => {
         }
         setDependencyBanner(
             "<strong>Installing dependencies...</strong> This may take a minute on first run.",
-            "Downloading ffmpeg and yt-dlp to your local app folder.",
+            "Downloading missing tools to your local app folder (includes optional Deno).",
             false
         );
         try {
             const deps = await api("/api/bootstrap-deps", { method: "POST" });
             renderDependencyStatus(deps);
-            if ((deps.required_missing || []).length === 0) {
+            const requiredMissingCount = (deps.required_missing || []).length;
+            const denoMissing = !deps.deno?.installed;
+            if (requiredMissingCount === 0 && !denoMissing) {
                 if (installBtn) installBtn.classList.add("hidden");
-            } else if (manual) {
+            } else if (manual && requiredMissingCount > 0) {
                 setDependencyBanner(
                     "<strong>Dependencies are still missing.</strong>",
-                    "Use the Step 1 troubleshooting list, then restart the app after manual install.",
+                    "Use the dependency troubleshooting list, then restart the app after manual install.",
                     true
                 );
             }
@@ -469,6 +598,73 @@ const App = (() => {
         }
     }
 
+    async function updateYtdlp() {
+        if (dependencyUpdateInFlight) return;
+        dependencyUpdateInFlight = true;
+
+        const updateBtn = $("update-ytdlp-btn");
+        const previousLabel = updateBtn?.textContent || "";
+        if (updateBtn) {
+            updateBtn.disabled = true;
+            updateBtn.textContent = "Updating yt-dlp...";
+        }
+
+        setDependencyBanner(
+            "<strong>Updating yt-dlp...</strong>",
+            "Downloading the latest yt-dlp build to your local app runtime folder.",
+            false
+        );
+
+        try {
+            const deps = await api("/api/update-ytdlp", { method: "POST" });
+            renderDependencyStatus(deps);
+
+            const updateState = deps?.ytdlp_update || {};
+            const updateError = updateState.last_error || "";
+            const updateMessage = updateState.message || "";
+            if (updateState.status === "failed") {
+                setDependencyBanner(
+                    "<strong>yt-dlp update failed.</strong>",
+                    updateError || "Check internet access and retry.",
+                    true
+                );
+            } else {
+                setDependencyBanner(
+                    "<strong>yt-dlp is ready.</strong>",
+                    escapeHtml(updateMessage || "Update complete."),
+                    false
+                );
+            }
+        } catch (e) {
+            setDependencyBanner(
+                "<strong>yt-dlp update failed.</strong>",
+                "Check your internet connection and try again.",
+                true
+            );
+        } finally {
+            dependencyUpdateInFlight = false;
+            if (updateBtn && !updateBtn.classList.contains("hidden")) {
+                updateBtn.disabled = false;
+                updateBtn.textContent = previousLabel || "Update yt-dlp (1-click)";
+            }
+        }
+    }
+
+    async function allowDependencyAutoDownload() {
+        setAutoDownloadConsent("allow");
+        dependencyInstallAttempted = true;
+        await installMissingDependencies(false);
+    }
+
+    function useManualDependencySetup() {
+        setAutoDownloadConsent("manual");
+        setDependencyBanner(
+            "<strong>Auto-download is disabled.</strong>",
+            "Install tools manually from the Dependency Setup links, or click <strong>Auto Install Missing</strong> any time to opt in later.",
+            false
+        );
+    }
+
     // ── Initialization ──────────────────────────────────────────
 
     async function init() {
@@ -478,10 +674,17 @@ const App = (() => {
         try {
             const deps = await api("/api/check-deps");
             const missing = renderDependencyStatus(deps);
+            const hasMissingOptional = !deps.deno?.installed;
+            const shouldOfferAutoInstall = deps.auto_install_available && (missing.length > 0 || hasMissingOptional);
+            const consent = getAutoDownloadConsent();
 
-            if (missing.length > 0 && deps.auto_install_available && !dependencyInstallAttempted) {
-                dependencyInstallAttempted = true;
-                await installMissingDependencies(false);
+            if (shouldOfferAutoInstall && !dependencyInstallAttempted) {
+                if (consent === "allow") {
+                    dependencyInstallAttempted = true;
+                    await installMissingDependencies(false);
+                } else if (!consent) {
+                    showAutoDownloadConsentPrompt(deps);
+                }
             }
         } catch (e) {
             // Server not running - show connection error
@@ -494,7 +697,9 @@ const App = (() => {
 
         // Audio clip duration
         $("audio-start-input").addEventListener("input", onAudioStartInputChange);
-        $("audio-end-input").addEventListener("input", updateAudioClipDuration);
+        $("audio-end-input").addEventListener("input", onAudioEndInputChange);
+        $("audio-trim-start-slider")?.addEventListener("input", () => onAudioTrimSliderChange("start"));
+        $("audio-trim-end-slider")?.addEventListener("input", () => onAudioTrimSliderChange("end"));
 
         // Auto-format timestamps on blur
         const timestampInputs = ["audio-start-input", "audio-end-input"];
@@ -511,6 +716,7 @@ const App = (() => {
         $("volume-value").textContent = `${DEFAULT_PREVIEW_VOLUME}%`;
         $("volume-slider").addEventListener("input", onVolumeChange);
         onVolumeChange();
+        $("preview-timeline-slider")?.addEventListener("input", onPreviewTimelineInput);
 
         // Allow Enter to validate
         $("url-input").addEventListener("keydown", (e) => {
@@ -540,6 +746,8 @@ const App = (() => {
 
         // Load saved settings
         loadSettings();
+        bindDependencyDropdownCloseHandlers();
+        applySeparateAudioTrimConstraints("start", { syncPreview: false });
 
         // ASCII star animation
         initStarAnimation();
@@ -601,26 +809,99 @@ const App = (() => {
         bang2.textContent = "!";
     }
 
-    function updateAudioClipDuration() {
-        const start = parseTimestamp($("audio-start-input").value);
-        const end = parseTimestamp($("audio-end-input").value);
-        if (end > start) {
-            $("audio-clip-duration").textContent = `Audio: ${formatDuration(end - start)}`;
-        } else {
-            $("audio-clip-duration").textContent = "";
+    function getAudioTrimRangeMaxSeconds() {
+        const clipDur = getTargetClipDurationSeconds();
+        const start = getSeparateAudioStartSeconds();
+        const end = getSeparateAudioEndSeconds();
+        return Math.max(clipDur, audioDuration || 0, start, end, 0);
+    }
+
+    function setAudioTrimSliderState(startSeconds, endSeconds, maxSeconds) {
+        const startSlider = $("audio-trim-start-slider");
+        const endSlider = $("audio-trim-end-slider");
+        const startVal = $("audio-trim-start-val");
+        const endVal = $("audio-trim-end-val");
+        if (!startSlider || !endSlider || !startVal || !endVal) return;
+
+        const safeMax = Math.max(0, Number(maxSeconds) || 0);
+        const safeStart = Math.max(0, Math.min(safeMax || Number.POSITIVE_INFINITY, Number(startSeconds) || 0));
+        const safeEnd = Math.max(0, Math.min(safeMax || Number.POSITIVE_INFINITY, Number(endSeconds) || 0));
+        const disabled = safeMax <= 0;
+
+        startSlider.disabled = disabled;
+        endSlider.disabled = disabled;
+        startSlider.min = "0";
+        endSlider.min = "0";
+        startSlider.max = safeMax.toFixed(3);
+        endSlider.max = safeMax.toFixed(3);
+        startSlider.value = safeStart.toFixed(3);
+        endSlider.value = safeEnd.toFixed(3);
+        startVal.textContent = formatDuration(safeStart);
+        endVal.textContent = formatDuration(safeEnd);
+    }
+
+    function normalizeSeparateAudioTrimRange(startSeconds, endSeconds, anchor = "start") {
+        const clipDur = getTargetClipDurationSeconds();
+        const maxSeconds = getAudioTrimRangeMaxSeconds();
+        const safeMax = Math.max(0, Number(maxSeconds) || 0);
+        let start = Math.max(0, Number(startSeconds) || 0);
+        let end = Math.max(0, Number(endSeconds) || 0);
+
+        if (safeMax > 0) {
+            start = Math.min(start, safeMax);
+            end = Math.min(end, safeMax);
         }
-        syncSeparateAudioWithVideo(true);
+
+        if (clipDur > 0) {
+            if (anchor === "end") {
+                start = end - clipDur;
+            } else {
+                end = start + clipDur;
+            }
+
+            if (start < 0) {
+                start = 0;
+                end = clipDur;
+            }
+
+            if (safeMax > 0 && end > safeMax) {
+                end = safeMax;
+                start = Math.max(0, end - clipDur);
+            }
+
+            // Source audio shorter than target clip: clamp to source bounds.
+            if (safeMax > 0 && clipDur > safeMax) {
+                start = 0;
+                end = safeMax;
+            }
+        } else if (end <= start) {
+            end = start + AUDIO_TRIM_MIN_SPAN;
+            if (safeMax > 0 && end > safeMax) {
+                end = safeMax;
+                start = Math.max(0, end - AUDIO_TRIM_MIN_SPAN);
+            }
+        }
+
+        return { start, end, maxSeconds: safeMax };
+    }
+
+    function updateAudioClipDuration(syncPreview = true) {
+        const start = getSeparateAudioStartSeconds();
+        const end = getSeparateAudioEndSeconds();
+        const durationEl = $("audio-clip-duration");
+        if (durationEl) {
+            durationEl.textContent = end > start
+                ? `Audio: ${formatDuration(end - start)}`
+                : "";
+        }
+        setAudioTrimSliderState(start, end, getAudioTrimRangeMaxSeconds());
+        if (syncPreview) {
+            syncSeparateAudioWithVideo(true);
+        }
     }
 
     function formatSecondsForTimestampInput(seconds) {
-        const safe = Math.max(0, Number(seconds) || 0);
-        const hours = Math.floor(safe / 3600);
-        const mins = Math.floor((safe % 3600) / 60);
-        const secs = Math.floor(safe % 60);
-        if (hours > 0) {
-            return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-        }
-        return `${mins}:${secs.toString().padStart(2, "0")}`;
+        return formatDuration(seconds);
     }
 
     function getTargetClipDurationSeconds() {
@@ -629,27 +910,57 @@ const App = (() => {
         return clipDuration || videoDuration || (videoInfo && Number(videoInfo.duration)) || 0;
     }
 
-    function syncAudioEndToClipDuration() {
-        if (!useSeparateAudio) return;
+    function applySeparateAudioTrimConstraints(anchor = "start", options = {}) {
+        const { syncPreview = true } = options;
         const startInput = $("audio-start-input");
         const endInput = $("audio-end-input");
         if (!startInput || !endInput) return;
-        const clipDur = getTargetClipDurationSeconds();
-        if (clipDur <= 0) return;
 
-        const start = parseTimestamp(startInput.value);
-        const newEnd = start + clipDur;
-        endInput.value = formatSecondsForTimestampInput(newEnd);
-        updateAudioClipDuration();
+        const parsedStart = parseTimestamp(startInput.value || "0");
+        const parsedEnd = parseTimestamp(endInput.value || "0");
+        const { start, end, maxSeconds } = normalizeSeparateAudioTrimRange(parsedStart, parsedEnd, anchor);
+
+        startInput.value = formatSecondsForTimestampInput(start);
+        endInput.value = formatSecondsForTimestampInput(end);
+        setAudioTrimSliderState(start, end, maxSeconds);
+        updateAudioClipDuration(syncPreview);
+    }
+
+    function syncAudioEndToClipDuration() {
+        if (!useSeparateAudio) return;
+        applySeparateAudioTrimConstraints("start");
     }
 
     function onAudioStartInputChange() {
         if (useSeparateAudio) {
-            syncAudioEndToClipDuration();
+            applySeparateAudioTrimConstraints("start");
         } else {
             updateAudioClipDuration();
         }
-        syncSeparateAudioWithVideo(true);
+    }
+
+    function onAudioEndInputChange() {
+        if (useSeparateAudio) {
+            applySeparateAudioTrimConstraints("end");
+        } else {
+            updateAudioClipDuration();
+        }
+    }
+
+    function onAudioTrimSliderChange(anchor) {
+        const startInput = $("audio-start-input");
+        const endInput = $("audio-end-input");
+        const startSlider = $("audio-trim-start-slider");
+        const endSlider = $("audio-trim-end-slider");
+        if (!startInput || !endInput || !startSlider || !endSlider) return;
+
+        if (anchor === "end") {
+            endInput.value = formatSecondsForTimestampInput(parseFloat(endSlider.value || "0"));
+        } else {
+            startInput.value = formatSecondsForTimestampInput(parseFloat(startSlider.value || "0"));
+        }
+
+        applySeparateAudioTrimConstraints(anchor);
     }
 
     function debounce(fn, ms) {
@@ -675,15 +986,18 @@ const App = (() => {
         trimEnd = (endPct / 100) * clipDuration;
 
         // Ensure start doesn't exceed end
-        if (trimStart >= trimEnd - 0.5) {
+        if (trimStart >= trimEnd - 0.01) {
             if (this.id === "trim-start-slider") {
-                trimStart = trimEnd - 0.5;
+                trimStart = trimEnd - 0.01;
                 $("trim-start-slider").value = (trimStart / clipDuration) * 100;
             } else {
-                trimEnd = trimStart + 0.5;
+                trimEnd = trimStart + 0.01;
                 $("trim-end-slider").value = (trimEnd / clipDuration) * 100;
             }
         }
+
+        trimStart = Math.max(0, Math.round(trimStart * 100) / 100);
+        trimEnd = Math.max(trimStart + 0.01, Math.round(trimEnd * 100) / 100);
 
         // Update displays
         $("trim-start-val").textContent = formatDuration(trimStart);
@@ -695,6 +1009,7 @@ const App = (() => {
         if (video && video.src) {
             video.currentTime = trimStart;
         }
+        updatePreviewTimelineFromCurrentTime();
 
         if (useSeparateAudio) {
             syncAudioEndToClipDuration();
@@ -712,6 +1027,7 @@ const App = (() => {
         $("trim-start-val").textContent = formatDuration(0);
         $("trim-end-val").textContent = formatDuration(duration);
         $("trim-duration").textContent = "Duration: " + formatDuration(duration);
+        updatePreviewTimelineFromCurrentTime();
         if (useSeparateAudio) {
             syncAudioEndToClipDuration();
         }
@@ -777,7 +1093,7 @@ const App = (() => {
                 method: "POST",
                 body: JSON.stringify({
                     url: videoUrl,
-                    start: "0:00",
+                    start: "0:00.00",
                     end: formatDuration(videoDuration)
                 }),
             });
@@ -836,6 +1152,9 @@ const App = (() => {
             $("audio-video-title").textContent = data.title;
             $("audio-video-duration").textContent = formatDuration(data.duration);
             show("audio-video-info");
+            if (useSeparateAudio) {
+                applySeparateAudioTrimConstraints("start", { syncPreview: false });
+            }
         } catch (e) {
             showError("audio-url-error", "Failed to validate URL. Is the server running?");
             audioValidated = false;
@@ -967,10 +1286,18 @@ const App = (() => {
     function onAudioToggle(e) {
         useSeparateAudio = e.target.checked;
         if (useSeparateAudio) {
+            const staticImageToggle = $("use-static-image");
+            if (staticImageToggle?.checked) {
+                staticImageToggle.checked = false;
+                onStaticImageToggle({ target: staticImageToggle });
+            }
             show("audio-source-section");
             setAudioSourceType(audioSourceType);
             if (!$("audio-start-input").value.trim()) {
-                $("audio-start-input").value = "0:00";
+                $("audio-start-input").value = "0:00.00";
+            }
+            if (!$("audio-end-input").value.trim()) {
+                $("audio-end-input").value = "0:14.00";
             }
             syncAudioEndToClipDuration();
             updatePreviewAudioRouting();
@@ -987,15 +1314,27 @@ const App = (() => {
             hide("audio-file-info");
             hideError("audio-url-error");
             clearLoadedSeparateAudioPreview();
+            $("audio-start-input").value = "0:00.00";
+            $("audio-end-input").value = "0:14.00";
+            updateAudioClipDuration(false);
         }
     }
 
     function onStaticImageToggle(e) {
         useStaticImage = e.target.checked;
         if (useStaticImage) {
+            const separateAudioToggle = $("use-separate-audio");
+            if (separateAudioToggle?.checked) {
+                separateAudioToggle.checked = false;
+                onAudioToggle({ target: separateAudioToggle });
+            }
             show("static-image-section");
             if (jobId && staticImagePreviewUrl) {
-                loadImagePreview(staticImagePreviewUrl);
+                if (staticImageSourceType === "image") {
+                    loadImagePreview(staticImagePreviewUrl);
+                } else {
+                    loadVideoPreview(staticImagePreviewUrl);
+                }
             }
         } else {
             hide("static-image-section");
@@ -1009,25 +1348,39 @@ const App = (() => {
         const file = e.target.files[0];
         if (!file) return;
 
-        if (!file.type.startsWith("image/")) {
-            showError("step2-error", "Please select an image file for static image mode.");
+        const isImage = file.type.startsWith("image/");
+        const isVideo = file.type.startsWith("video/");
+        if (!isImage && !isVideo) {
+            showError("step2-error", "Please select an image or video file.");
             return;
         }
 
         staticImageFile = file;
         hideError("step2-error");
+        clearAlternateVisualPreviewUrl();
 
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            staticImagePreviewUrl = ev.target.result;
-            $("static-image-preview").src = staticImagePreviewUrl;
-            show("image-preview-container");
+        if (isImage) {
+            staticImageSourceType = "image";
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                staticImagePreviewUrl = String(ev.target?.result || "");
+                $("static-image-preview").src = staticImagePreviewUrl;
+                show("image-preview-container");
 
-            if (useStaticImage && jobId) {
-                loadImagePreview(staticImagePreviewUrl);
-            }
-        };
-        reader.readAsDataURL(file);
+                if (useStaticImage && jobId) {
+                    loadImagePreview(staticImagePreviewUrl);
+                }
+            };
+            reader.readAsDataURL(file);
+            return;
+        }
+
+        staticImageSourceType = "video";
+        staticImagePreviewUrl = URL.createObjectURL(file);
+        hide("image-preview-container");
+        if (useStaticImage && jobId) {
+            loadVideoPreview(staticImagePreviewUrl);
+        }
     }
 
     // ── Source Type Toggle ──────────────────────────────────────
@@ -1218,8 +1571,57 @@ const App = (() => {
     function setPreviewControlVisibility(visible) {
         const controls = $("preview-controls");
         const volume = $("preview-volume-control");
+        const timeline = $("preview-timeline-control");
         if (controls) controls.classList.toggle("hidden", !visible);
         if (volume) volume.classList.toggle("hidden", !visible);
+        if (timeline) timeline.classList.toggle("hidden", !visible);
+    }
+
+    function updatePreviewTimelineFromCurrentTime() {
+        const slider = $("preview-timeline-slider");
+        const valueLabel = $("preview-timeline-value");
+        const video = $("crop-video");
+        if (!slider || !valueLabel || !video || !video.src || clipDuration <= 0) {
+            if (slider) {
+                slider.disabled = true;
+                slider.min = "0";
+                slider.max = "0";
+                slider.value = "0";
+            }
+            if (valueLabel) valueLabel.textContent = "0:00.00 / 0:00.00";
+            return;
+        }
+
+        const start = Math.max(0, trimStart);
+        const end = Math.max(start + 0.01, trimEnd);
+        const rawCurrent = Number(video.currentTime);
+        const current = Number.isFinite(rawCurrent)
+            ? Math.max(start, Math.min(end, rawCurrent))
+            : start;
+
+        slider.disabled = false;
+        slider.min = start.toFixed(3);
+        slider.max = end.toFixed(3);
+        slider.value = current.toFixed(3);
+
+        const relativeCurrent = Math.max(0, current - start);
+        const relativeTotal = Math.max(0, end - start);
+        valueLabel.textContent = `${formatDuration(relativeCurrent)} / ${formatDuration(relativeTotal)}`;
+    }
+
+    function onPreviewTimelineInput(e) {
+        const video = $("crop-video");
+        if (!video || !video.src) return;
+
+        const start = Math.max(0, trimStart);
+        const end = Math.max(start + 0.01, trimEnd);
+        let target = parseFloat(e.target.value);
+        if (!Number.isFinite(target)) target = start;
+        target = Math.max(start, Math.min(end, target));
+
+        video.currentTime = target;
+        syncSeparateAudioWithVideo(true);
+        updatePreviewTimelineFromCurrentTime();
     }
 
     function loadImagePreview(imageUrl) {
@@ -1236,7 +1638,7 @@ const App = (() => {
 
         cropPreview.initializeImage(imageUrl);
 
-        // In static image mode, keep crop image visible but use hidden crop-video for audio preview.
+        // In image override mode, keep crop image visible but use hidden crop-video for audio preview.
         const audioPreview = $("crop-video");
         audioPreview.loop = false;
         const playBtn = $("preview-play-btn");
@@ -1257,6 +1659,7 @@ const App = (() => {
             audioPreview.currentTime = trimStart;
             audioPreview.pause();
             syncSeparateAudioWithVideo(true);
+            updatePreviewTimelineFromCurrentTime();
             if (playBtn) playBtn.textContent = "▶ Play Audio";
         };
 
@@ -1265,10 +1668,12 @@ const App = (() => {
                 audioPreview.currentTime = trimStart;
             }
             syncSeparateAudioWithVideo(false);
+            updatePreviewTimelineFromCurrentTime();
         };
         audioPreview.onended = () => {
             audioPreview.currentTime = trimStart;
             syncSeparateAudioWithVideo(true);
+            updatePreviewTimelineFromCurrentTime();
             audioPreview.play().catch(() => { });
         };
 
@@ -1277,10 +1682,13 @@ const App = (() => {
         initTrimSliders(Math.max(0, fallbackDur));
     }
 
-    function loadVideoPreview() {
-        if (useStaticImage && staticImagePreviewUrl) {
+    function loadVideoPreview(sourceUrl = "") {
+        if (useStaticImage && staticImageSourceType === "image" && staticImagePreviewUrl) {
             loadImagePreview(staticImagePreviewUrl);
             return;
+        }
+        if (!sourceUrl && useStaticImage && staticImageSourceType === "video" && staticImagePreviewUrl) {
+            sourceUrl = staticImagePreviewUrl;
         }
 
         if (!cropPreview) {
@@ -1304,7 +1712,8 @@ const App = (() => {
         };
 
         // Start loading
-        video.src = `/api/serve-clip/${jobId}?t=${Date.now()}`;
+        const defaultUrl = `/api/serve-clip/${jobId}?t=${Date.now()}`;
+        video.src = sourceUrl || defaultUrl;
 
         video.onloadedmetadata = () => {
             // Re-apply slider volume to the newly loaded media.
@@ -1316,6 +1725,7 @@ const App = (() => {
             const dur = video.duration;
             initTrimSliders(dur);
             syncSeparateAudioWithVideo(true);
+            updatePreviewTimelineFromCurrentTime();
         };
 
         // Handle looping within trim region
@@ -1324,10 +1734,12 @@ const App = (() => {
                 video.currentTime = trimStart;
             }
             syncSeparateAudioWithVideo(false);
+            updatePreviewTimelineFromCurrentTime();
         };
         video.onended = () => {
             video.currentTime = trimStart;
             syncSeparateAudioWithVideo(true);
+            updatePreviewTimelineFromCurrentTime();
             video.play().catch(() => { });
         };
     }
@@ -1341,7 +1753,7 @@ const App = (() => {
         }
 
         if (useStaticImage && !staticImageFile) {
-            showError("step4-error", "Please select a static image file.");
+            showError("step4-error", "Please select a different image or video file.");
             return;
         }
         if (useSeparateAudio && !separateAudioPreviewLoaded) {
@@ -1368,6 +1780,7 @@ const App = (() => {
             formData.append("trim_end", trimEnd);
             formData.append("use_separate_audio", useSeparateAudio);
             formData.append("use_static_image", useStaticImage);
+            formData.append("use_alternate_visual", useStaticImage);
             formData.append("audio_fade_mode", $("audio-fade-mode")?.value || "none");
             formData.append("audio_fade_duration", settings.audioFadeDuration || "0.35");
             formData.append("settings", JSON.stringify(settings));
@@ -1394,6 +1807,7 @@ const App = (() => {
 
             if (useStaticImage && staticImageFile) {
                 formData.append("static_image", staticImageFile);
+                formData.append("alternate_visual", staticImageFile);
             }
 
             const resp = await fetch("/api/process", {
@@ -1569,6 +1983,9 @@ const App = (() => {
         resetSettings,
         shutdownApp,
         installMissingDependencies,
+        updateYtdlp,
+        allowDependencyAutoDownload,
+        useManualDependencySetup,
         toggleSettingsPanel,
         openSettingsPanel,
     };
