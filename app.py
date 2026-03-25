@@ -5,6 +5,7 @@ import glob
 import re
 import mimetypes
 import platform
+import socket
 import subprocess
 import threading
 import shutil
@@ -35,17 +36,21 @@ app = Flask(__name__, static_folder=str(INTERNAL_DIR / "static"))
 TEMP_DIR = BASE_DIR / "temp"
 DOWNLOADS_DIR = TEMP_DIR / "downloads"
 PROCESSING_DIR = TEMP_DIR / "processing"
-OUTPUT_DIR = BASE_DIR / "output"
 if platform.system() == "Windows":
     local_app_data = os.environ.get("LOCALAPPDATA")
     runtime_root_base = Path(local_app_data) if local_app_data else BASE_DIR
     RUNTIME_DIR = runtime_root_base / "alert-alert" / "runtime"
+    APP_STATE_DIR = runtime_root_base / "alert-alert"
 else:
     RUNTIME_DIR = BASE_DIR / ".runtime"
+    APP_STATE_DIR = BASE_DIR / ".appstate"
 RUNTIME_BIN_DIR = RUNTIME_DIR / "bin"
+APP_STATE_DIR.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = APP_STATE_DIR / "settings.json"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "output"
 
 # Ensure directories exist
-for d in [DOWNLOADS_DIR, PROCESSING_DIR, OUTPUT_DIR, RUNTIME_BIN_DIR]:
+for d in [DOWNLOADS_DIR, PROCESSING_DIR, RUNTIME_BIN_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 NULL_DEVICE = "NUL" if platform.system() == "Windows" else "/dev/null"
@@ -53,6 +58,54 @@ AUTO_INSTALL_SUPPORTED = platform.system() == "Windows"
 FFMPEG_WINDOWS_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 YTDLP_WINDOWS_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 DENO_WINDOWS_URL = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+
+
+def _load_app_settings():
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_app_settings(settings):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+
+
+APP_SETTINGS = _load_app_settings()
+
+
+def get_output_dir():
+    configured = str(APP_SETTINGS.get("output_dir", "")).strip()
+    path = Path(configured).expanduser() if configured else DEFAULT_OUTPUT_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+OUTPUT_DIR = get_output_dir()
+
+
+def set_output_dir(path_value):
+    global OUTPUT_DIR
+    raw = str(path_value or "").strip()
+    path = DEFAULT_OUTPUT_DIR if not raw else Path(raw).expanduser()
+    path.mkdir(parents=True, exist_ok=True)
+    APP_SETTINGS["output_dir"] = str(path.resolve())
+    _save_app_settings(APP_SETTINGS)
+    OUTPUT_DIR = path.resolve()
+    return OUTPUT_DIR
+
+
+def reset_output_dir():
+    global OUTPUT_DIR
+    APP_SETTINGS.pop("output_dir", None)
+    _save_app_settings(APP_SETTINGS)
+    OUTPUT_DIR = DEFAULT_OUTPUT_DIR.resolve()
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR
 
 # In-memory job status tracking
 jobs = {}
@@ -263,6 +316,56 @@ def _required_missing(results):
     return [name for name in required if not results.get(name, {}).get("installed")]
 
 
+def get_caption_dependency_status():
+    """Return install status for Reel Maker captioning dependencies."""
+    result = {}
+
+    try:
+        import faster_whisper
+        result["faster_whisper"] = {
+            "installed": True,
+            "version": getattr(faster_whisper, "__version__", "unknown"),
+        }
+    except ImportError:
+        result["faster_whisper"] = {"installed": False, "version": None}
+
+    try:
+        import torch
+        cuda_available = torch.cuda.is_available()
+        result["torch"] = {
+            "installed": True,
+            "version": torch.__version__,
+            "cuda": cuda_available,
+            "device": torch.cuda.get_device_name(0) if cuda_available else "CPU",
+        }
+    except ImportError:
+        result["torch"] = {
+            "installed": False,
+            "version": None,
+            "cuda": False,
+            "device": None,
+        }
+
+    try:
+        import pyannote.audio
+        result["pyannote_audio"] = {
+            "installed": True,
+            "version": getattr(pyannote.audio, "__version__", "unknown"),
+        }
+    except ImportError:
+        result["pyannote_audio"] = {"installed": False, "version": None}
+
+    result["required_missing"] = [
+        name for name in ("faster_whisper", "torch")
+        if not result.get(name, {}).get("installed")
+    ]
+    result["optional_missing"] = [
+        name for name in ("pyannote_audio",)
+        if not result.get(name, {}).get("installed")
+    ]
+    return result
+
+
 def _build_deps_payload(results):
     payload = dict(results)
     payload["required_missing"] = _required_missing(results)
@@ -280,7 +383,17 @@ def _build_deps_payload(results):
     payload["bootstrap"] = dict(DEPS_BOOTSTRAP_STATE)
     payload["ytdlp_update"] = dict(YTDLP_UPDATE_STATE)
     payload["ytdlp_update_available"] = bool(results.get("yt-dlp", {}).get("installed")) or AUTO_INSTALL_SUPPORTED
+    payload["captioning"] = get_caption_dependency_status()
     return payload
+
+
+def _build_storage_payload():
+    output_dir = get_output_dir()
+    return {
+        "output_dir": str(output_dir),
+        "default_output_dir": str(DEFAULT_OUTPUT_DIR.resolve()),
+        "custom_output_dir": str(APP_SETTINGS.get("output_dir", "")).strip() or None,
+    }
 
 
 def _download_file(url, dest_path, timeout=180):
@@ -478,6 +591,64 @@ def bootstrap_deps():
 def update_ytdlp():
     results = update_ytdlp_one_click()
     return jsonify(_build_deps_payload(results))
+
+
+@app.route("/api/storage-config")
+def storage_config():
+    return jsonify(_build_storage_payload())
+
+
+@app.route("/api/storage-config", methods=["PUT"])
+def update_storage_config():
+    data = request.get_json(silent=True) or {}
+    output_dir = data.get("output_dir", "")
+    try:
+        path = set_output_dir(output_dir)
+        return jsonify({
+            "status": "saved",
+            "output_dir": str(path),
+            "default_output_dir": str(DEFAULT_OUTPUT_DIR.resolve()),
+            "custom_output_dir": str(APP_SETTINGS.get("output_dir", "")).strip() or None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/storage-config/reset", methods=["POST"])
+def reset_storage_config():
+    path = reset_output_dir()
+    return jsonify({
+        "status": "reset",
+        "output_dir": str(path),
+        "default_output_dir": str(DEFAULT_OUTPUT_DIR.resolve()),
+        "custom_output_dir": None,
+    })
+
+
+@app.route("/api/storage-config/choose", methods=["POST"])
+def choose_storage_config():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askdirectory(initialdir=str(get_output_dir()), title="Choose export save folder")
+        root.destroy()
+    except Exception as e:
+        return jsonify({"error": f"Folder picker unavailable: {e}"}), 400
+
+    if not selected:
+        return jsonify({"status": "cancelled"})
+
+    path = set_output_dir(selected)
+    return jsonify({
+        "status": "saved",
+        "output_dir": str(path),
+        "default_output_dir": str(DEFAULT_OUTPUT_DIR.resolve()),
+        "custom_output_dir": str(APP_SETTINGS.get("output_dir", "")).strip() or None,
+    })
 
 
 def run_deps_check(force=False):
@@ -929,7 +1100,7 @@ def download_result(job_id):
 
     filename = str(job.get("filename") or f"alert_{job_id}.mp4")
     safe_filename = Path(filename).name
-    filepath = OUTPUT_DIR / safe_filename
+    filepath = get_output_dir() / safe_filename
     if not filepath.exists():
         return jsonify({"error": "File not found"}), 404
     return send_file(str(filepath), as_attachment=True, download_name=safe_filename)
@@ -944,6 +1115,11 @@ def cleanup(job_id):
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
     return jsonify({"status": "cleaned"})
+
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/shutdown", methods=["POST"])
@@ -972,7 +1148,7 @@ register_caption_routes(app)
 
 # ── Run ─────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def bootstrap_runtime():
     if platform.system() == "Windows" and not getattr(sys, 'frozen', False):
         os.system("title deutschmark's Alert! Alert!")
     print("Checking runtime dependencies...")
@@ -997,14 +1173,52 @@ if __name__ == "__main__":
     elif DEPS_BOOTSTRAP_STATE["status"] == "ready":
         print("  dependency status: ready")
     print("")
+
+
+def is_port_available(host, port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def find_available_port(host="127.0.0.1", preferred_port=5000, max_tries=25):
+    if is_port_available(host, preferred_port):
+        return preferred_port
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        dynamic_port = sock.getsockname()[1]
+    if dynamic_port:
+        return dynamic_port
+
+    for offset in range(1, max_tries + 1):
+        port = preferred_port + offset
+        if is_port_available(host, port):
+            return port
+    raise RuntimeError("Could not find an open localhost port for the app server.")
+
+
+def start_server(host="127.0.0.1", port=5000, open_browser=False):
+    bootstrap_runtime()
+    app_url = f"http://{host}:{port}"
     print("  Starting server...")
-    print("  App will open in your browser.")
-    print("  Keep this window open while using the app.")
+    if open_browser:
+        print("  App will open in your browser.")
+        print("  Keep this window open while using the app.")
+    else:
+        print("  App is running in desktop mode.")
     print("="*65)
 
-    # Open the browser
-    webbrowser.open("http://127.0.0.1:5000")
+    if open_browser:
+        webbrowser.open(app_url)
 
-    # Run using Waitress (Production Server)
     from waitress import serve
-    serve(app, host="127.0.0.1", port=5000, threads=6)
+    serve(app, host=host, port=port, threads=6)
+
+
+if __name__ == "__main__":
+    start_server(host="127.0.0.1", port=5000, open_browser=True)

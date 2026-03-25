@@ -6,7 +6,7 @@
 /_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
 ```
 
-**The production-ready desktop tool for creating stream alerts from YouTube, Instagram, TikTok, and local files.**
+**The desktop tool for creating stream alerts and vertical reels from YouTube, Instagram, TikTok, and local files.**
 
 Download clips or load local media, trim and crop with precision, apply audio options, and export polished alert videos quickly with a workflow built for one-click reliability.
 
@@ -28,6 +28,12 @@ Download clips or load local media, trim and crop with precision, apply audio op
 - **Multiple Aspect Ratios** — Export in 1:1 (square), 16:9 (widescreen), 9:16 (vertical/TikTok), or 4:3
 - **Resolution Options** — Export at 480p, 720p, or 1080p
 - **Interactive Crop** — Drag to position your crop area and zoom as needed
+
+### Reel Maker
+- **Multi-Clip VOD Projects** — Build reels from multiple timestamp ranges in one project
+- **Stream-First Local VOD Flow** — Keep the local source in the browser until clip extraction starts
+- **Auto Captions + Speaker Colors** — Generate captions, edit text, and color-code speakers
+- **Vertical Reel Export** — Render 9:16 reels at 1080x1920, 1440x2560, or 2160x3840
 
 ### Audio
 - **Audio Normalization** — Automatic loudness normalization (EBU R128, -16 LUFS), toggleable
@@ -53,7 +59,7 @@ Download clips or load local media, trim and crop with precision, apply audio op
 You need **Python 3.10 or newer** to run or build this project.
 
 ### EXE Dependency Behavior (One-Click)
-- On Windows, `alert-alert.exe` auto-checks dependencies at launch.
+- On Windows, `alert-alert.exe` launches a standalone desktop window and auto-checks dependencies at startup.
 - If `ffmpeg`, `ffprobe`, `yt-dlp`, or `deno` are missing, the app shows a consent prompt before downloading them into a user-local runtime folder (no admin required).
 - Manual fallback remains available in **Dependency Setup (top-right)**.
 - Auto-install requires outbound internet access to GitHub and FFmpeg mirrors.
@@ -101,6 +107,8 @@ If you see errors like `'pip' is not recognized` or `'winget' is not recognized`
 pip install -r requirements.txt
 ```
 
+This installs the desktop shell dependency (`PySide6`) as well as the Python backend.
+
 ---
 
 ## Quick Start
@@ -110,8 +118,8 @@ pip install -r requirements.txt
 1. Download `alert-alert.exe` from [Releases](https://github.com/thedeutschmark/alert-alert/releases)
 2. Double-click to run
 3. On first launch, the app may briefly auto-install missing dependencies
-4. Browser opens automatically to the app interface
-5. Keep the console window open while using the app
+4. The app opens in its own desktop window
+5. If you use documentation or external links, they open in your default browser
 
 ### Option 2: Run from Source
 
@@ -126,7 +134,12 @@ pip install -r requirements.txt
    pip install -r requirements.txt
    ```
 
-3. **Run the app**
+3. **Run the desktop app**
+   ```bash
+   python desktop.py
+   ```
+
+4. **Optional: browser mode for development**
    ```bash
    python app.py
    ```
@@ -173,11 +186,24 @@ Settings are integrated directly into workflow steps and can also be opened from
 
 ## Building the EXE
 
-To build your own executable:
+Use the checked-in spec file and build script. The app now boots from [desktop.py](desktop.py), which embeds the current UI in a native desktop window and starts the shared Flask backend from [app.py](app.py). Rebuild after code changes so the shell and backend stay in sync.
+
+### Windows
+
+```bat
+build.bat
+```
+
+This runs PyInstaller against `AlertCreator.spec` and writes the standalone desktop executable to `dist\alert-alert.exe`.
+
+### Manual PyInstaller Build
+
+If you are not using `build.bat`, use the spec file directly:
 
 ```bash
 pip install pyinstaller
-python -m PyInstaller --name "alert-alert" --add-data "static;static" --icon=static/favicon.ico --clean --onefile app.py
+pip install PySide6
+python -m PyInstaller --clean --noconfirm AlertCreator.spec
 ```
 
 The output is generated in the `dist/` folder.
@@ -229,9 +255,10 @@ Third-party runtime tool notices are documented in [THIRD_PARTY_NOTICES.txt](THI
 Created by **deutschmark**
 
 Built with:
-- [Flask](https://flask.palletsprojects.com/) — Web framework
+- [Flask](https://flask.palletsprojects.com/) — Local API/backend
 - [FFmpeg](https://ffmpeg.org/) — Video processing
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — Video download engine
+- [PySide6](https://doc.qt.io/qtforpython/) — Native desktop shell and embedded web view
 - [Waitress](https://docs.pylonsproject.org/projects/waitress/) — Production WSGI server
 
 ---

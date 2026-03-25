@@ -7,7 +7,10 @@ const CaptionEditor = (() => {
     let words = [];
     let lines = [];
     let speakers = {};
+    let style = {};
+    let stylePresets = {};
     let dirty = false;
+    let controlsBound = false;
 
     const $ = (id) => document.getElementById(id);
 
@@ -29,7 +32,24 @@ const CaptionEditor = (() => {
     async function init(pId) {
         projectId = pId;
         dirty = false;
+        bindStyleControls();
         await loadCaptions();
+    }
+
+    function reset() {
+        projectId = "";
+        words = [];
+        lines = [];
+        speakers = {};
+        style = {};
+        stylePresets = {};
+        dirty = false;
+        const speakerPanel = $("reel-speaker-panel");
+        const linePanel = $("reel-caption-lines");
+        if (speakerPanel) speakerPanel.innerHTML = "";
+        if (linePanel) linePanel.innerHTML = "";
+        const summary = $("caption-style-summary");
+        if (summary) summary.textContent = "Saved with this project.";
     }
 
     async function loadCaptions() {
@@ -42,7 +62,10 @@ const CaptionEditor = (() => {
             }
             words = data.words || [];
             speakers = data.speakers || {};
+            style = data.style || {};
+            stylePresets = data.style_presets || {};
             lines = data.lines || groupWordsIntoLines(words);
+            renderStylePanel();
             renderSpeakerPanel();
             renderLineList();
         } catch (e) {
@@ -52,7 +75,7 @@ const CaptionEditor = (() => {
 
     // ── Group words into lines (mirror backend logic) ─────────────
 
-    function groupWordsIntoLines(words, maxWords = 6) {
+    function groupWordsIntoLines(words, maxWords = Number(style.max_words) || 6) {
         const result = [];
         let current = [];
 
@@ -91,6 +114,105 @@ const CaptionEditor = (() => {
     }
 
     // ── Render speaker panel ──────────────────────────────────────
+
+    function bindStyleControls() {
+        if (controlsBound) return;
+        controlsBound = true;
+
+        $("caption-style-preset")?.addEventListener("change", (event) => {
+            const preset = event.target.value;
+            style = { ...(stylePresets[preset] || {}), ...style, ...(stylePresets[preset] || {}), preset };
+            regroupLines();
+            renderStylePanel();
+            markDirty();
+        });
+
+        const numericFields = [
+            ["caption-style-scale", "font_scale", Number.parseFloat],
+            ["caption-style-max-words", "max_words", (value) => Number.parseInt(value, 10)],
+            ["caption-style-margin", "margin_v", (value) => Number.parseInt(value, 10)],
+            ["caption-style-outline", "outline", Number.parseFloat],
+            ["caption-style-shadow", "shadow", Number.parseFloat],
+            ["caption-style-background", "background_opacity", (value) => Number.parseInt(value, 10)],
+        ];
+        numericFields.forEach(([id, key, parser]) => {
+            $(id)?.addEventListener("input", (event) => {
+                style[key] = parser(event.target.value);
+                if (key === "max_words") {
+                    regroupLines();
+                }
+                renderStylePanel();
+                markDirty();
+            });
+        });
+
+        $("caption-style-font")?.addEventListener("change", (event) => {
+            style.font_family = event.target.value;
+            renderStylePanel();
+            markDirty();
+        });
+        $("caption-style-bold")?.addEventListener("change", (event) => {
+            style.bold = Boolean(event.target.checked);
+            markDirty();
+        });
+        $("caption-style-karaoke")?.addEventListener("change", (event) => {
+            style.karaoke = Boolean(event.target.checked);
+            markDirty();
+        });
+        $("caption-style-all-caps")?.addEventListener("change", (event) => {
+            style.all_caps = Boolean(event.target.checked);
+            renderLineList();
+            markDirty();
+        });
+    }
+
+    function flattenLines() {
+        const allWords = [];
+        for (const line of lines) {
+            for (const word of line.words) {
+                allWords.push({
+                    ...word,
+                    enabled: line.enabled,
+                    speaker: line.speaker,
+                });
+            }
+        }
+        return allWords;
+    }
+
+    function regroupLines() {
+        words = flattenLines();
+        lines = groupWordsIntoLines(words, Number(style.max_words) || 6);
+        renderLineList();
+    }
+
+    function renderStylePanel() {
+        const preset = style.preset || "pathos_clean";
+        const summary = $("caption-style-summary");
+        if ($("caption-style-preset")) $("caption-style-preset").value = preset;
+        if ($("caption-style-font")) $("caption-style-font").value = style.font_family || "Arial";
+        if ($("caption-style-scale")) $("caption-style-scale").value = String(style.font_scale ?? 1);
+        if ($("caption-style-max-words")) $("caption-style-max-words").value = String(style.max_words ?? 6);
+        if ($("caption-style-margin")) $("caption-style-margin").value = String(style.margin_v ?? 120);
+        if ($("caption-style-outline")) $("caption-style-outline").value = String(style.outline ?? 4);
+        if ($("caption-style-shadow")) $("caption-style-shadow").value = String(style.shadow ?? 2);
+        if ($("caption-style-background")) $("caption-style-background").value = String(style.background_opacity ?? 50);
+        if ($("caption-style-bold")) $("caption-style-bold").checked = Boolean(style.bold);
+        if ($("caption-style-karaoke")) $("caption-style-karaoke").checked = Boolean(style.karaoke);
+        if ($("caption-style-all-caps")) $("caption-style-all-caps").checked = Boolean(style.all_caps);
+
+        if ($("caption-style-scale-value")) $("caption-style-scale-value").textContent = `${Number(style.font_scale || 1).toFixed(2)}x`;
+        if ($("caption-style-max-words-value")) $("caption-style-max-words-value").textContent = `${Number(style.max_words || 6)} words`;
+        if ($("caption-style-margin-value")) $("caption-style-margin-value").textContent = `${Number(style.margin_v || 120)}px`;
+        if ($("caption-style-outline-value")) $("caption-style-outline-value").textContent = `${Number(style.outline || 0).toFixed(1)}`;
+        if ($("caption-style-shadow-value")) $("caption-style-shadow-value").textContent = `${Number(style.shadow || 0).toFixed(1)}`;
+        if ($("caption-style-background-value")) $("caption-style-background-value").textContent = `${Number(style.background_opacity || 0)}%`;
+
+        if (summary) {
+            const presetLabel = $("caption-style-preset")?.selectedOptions?.[0]?.textContent || "Custom";
+            summary.textContent = `${presetLabel} · ${style.font_family || "Arial"} · ${Number(style.max_words || 6)} words/line`;
+        }
+    }
 
     function renderSpeakerPanel() {
         const container = $("reel-speaker-panel");
@@ -132,7 +254,7 @@ const CaptionEditor = (() => {
                 )
                 .join("");
 
-            const lineText = line.words.map((w) => w.text).join(" ");
+            const lineText = line.words.map((w) => style.all_caps ? w.text.toUpperCase() : w.text).join(" ");
 
             el.innerHTML = `
                 <input type="checkbox" ${line.enabled ? "checked" : ""}
@@ -250,13 +372,19 @@ const CaptionEditor = (() => {
             const resp = await fetch(`/api/reel/captions/${projectId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ words: allWords, speakers }),
+                body: JSON.stringify({ words: allWords, speakers, style }),
             });
             const data = await resp.json();
             if (data.error) {
                 alert("Failed to save captions: " + data.error);
             } else {
                 dirty = false;
+                if (typeof ReelMaker !== "undefined" && typeof ReelMaker.markExportDirty === "function") {
+                    ReelMaker.markExportDirty();
+                }
+                if (typeof ReelMaker !== "undefined" && typeof ReelMaker.refreshAssets === "function") {
+                    ReelMaker.refreshAssets();
+                }
             }
         } catch (e) {
             alert("Failed to save captions: " + e.message);
@@ -275,6 +403,7 @@ const CaptionEditor = (() => {
         enableAll,
         disableAll,
         save,
+        reset,
         isDirty: () => dirty,
     };
 })();

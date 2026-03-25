@@ -1,13 +1,13 @@
 @echo off
 setlocal EnableExtensions
-REM Build script for deutschmark's Alert Creator
+REM Build script for deutschmark's Alert! Alert!
 REM Creates a standalone EXE using PyInstaller
 
 set "EXE_PATH=dist\alert-alert.exe"
 set "EXE_NAME=alert-alert.exe"
 
 echo ========================================
-echo deutschmark's Alert Creator - Build EXE
+echo deutschmark's Alert! Alert! - Build EXE
 echo ========================================
 echo.
 
@@ -18,6 +18,18 @@ if errorlevel 1 (
     pip install pyinstaller
     if errorlevel 1 (
         echo ERROR: Failed to install PyInstaller.
+        pause
+        exit /b 1
+    )
+)
+
+REM Check if PySide6 is installed (desktop shell runtime)
+pip show pyside6 >nul 2>&1
+if errorlevel 1 (
+    echo Installing PySide6 for desktop build...
+    pip install PySide6
+    if errorlevel 1 (
+        echo ERROR: Failed to install PySide6.
         pause
         exit /b 1
     )
@@ -67,6 +79,9 @@ echo ========================================
 echo Build complete!
 echo.
 echo EXE location: dist\alert-alert.exe
+echo.
+echo NOTE: EXE now launches the standalone desktop shell via desktop.py.
+echo       Rebuild after code changes so the embedded UI and backend stay in sync.
 echo.
 echo NOTE: EXE now auto-installs missing FFmpeg/yt-dlp at runtime.
 echo Manual fallback (if needed):

@@ -3,13 +3,19 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('static', 'static')]
 binaries = []
-hiddenimports = ['webview', 'PyQt6.QtWebEngineWidgets', 'PyQt6.QtWebEngineCore']
-tmp_ret = collect_all('PyQt6')
+hiddenimports = [
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'PySide6.QtWidgets',
+    'PySide6.QtWebEngineCore',
+    'PySide6.QtWebEngineWidgets',
+]
+tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['app.py'],
+    ['desktop.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

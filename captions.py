@@ -17,6 +17,80 @@ _diarize_lock = threading.Lock()
 
 # Default speaker colors (gold, blue, coral, green, pink)
 DEFAULT_SPEAKER_COLORS = ["#FFD700", "#00BFFF", "#FF6B6B", "#7CFC00", "#FF69B4"]
+DEFAULT_CAPTION_STYLE = {
+    "preset": "pathos_clean",
+    "font_family": "Arial",
+    "font_scale": 1.0,
+    "max_words": 6,
+    "margin_v": 120,
+    "outline": 4,
+    "shadow": 2,
+    "background_opacity": 50,
+    "all_caps": False,
+    "karaoke": True,
+    "bold": True,
+}
+CAPTION_STYLE_PRESETS = {
+    "pathos_clean": {
+        "font_family": "Arial",
+        "font_scale": 1.0,
+        "max_words": 6,
+        "margin_v": 120,
+        "outline": 4,
+        "shadow": 2,
+        "background_opacity": 50,
+        "all_caps": False,
+        "karaoke": True,
+        "bold": True,
+    },
+    "broadcast_bold": {
+        "font_family": "Impact",
+        "font_scale": 1.16,
+        "max_words": 5,
+        "margin_v": 136,
+        "outline": 5,
+        "shadow": 1,
+        "background_opacity": 36,
+        "all_caps": True,
+        "karaoke": True,
+        "bold": True,
+    },
+    "minimal_clean": {
+        "font_family": "Tahoma",
+        "font_scale": 0.9,
+        "max_words": 7,
+        "margin_v": 108,
+        "outline": 2,
+        "shadow": 1,
+        "background_opacity": 18,
+        "all_caps": False,
+        "karaoke": False,
+        "bold": False,
+    },
+}
+
+
+def normalize_caption_style(style=None):
+    """Merge caller-provided caption style with defaults and presets."""
+    resolved = dict(DEFAULT_CAPTION_STYLE)
+    if isinstance(style, dict):
+        preset_name = str(style.get("preset", resolved["preset"])).strip() or resolved["preset"]
+        if preset_name in CAPTION_STYLE_PRESETS:
+            resolved.update(CAPTION_STYLE_PRESETS[preset_name])
+        resolved.update({key: value for key, value in style.items() if value is not None})
+
+    resolved["preset"] = str(resolved.get("preset", "pathos_clean")).strip() or "pathos_clean"
+    resolved["font_family"] = str(resolved.get("font_family", "Arial")).strip() or "Arial"
+    resolved["font_scale"] = max(0.65, min(1.8, float(resolved.get("font_scale", 1.0) or 1.0)))
+    resolved["max_words"] = max(2, min(12, int(resolved.get("max_words", 6) or 6)))
+    resolved["margin_v"] = max(40, min(260, int(resolved.get("margin_v", 120) or 120)))
+    resolved["outline"] = max(0, min(8, float(resolved.get("outline", 4) or 0)))
+    resolved["shadow"] = max(0, min(8, float(resolved.get("shadow", 2) or 0)))
+    resolved["background_opacity"] = max(0, min(100, int(resolved.get("background_opacity", 50) or 0)))
+    resolved["all_caps"] = bool(resolved.get("all_caps", False))
+    resolved["karaoke"] = bool(resolved.get("karaoke", True))
+    resolved["bold"] = bool(resolved.get("bold", True))
+    return resolved
 
 
 def _get_whisper_model(model_size="large-v3", cache_dir=None):
@@ -110,8 +184,9 @@ def format_ass_time(seconds):
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def generate_ass_subtitles(words, speakers, play_res_x=1080, play_res_y=1920):
+def generate_ass_subtitles(words, speakers, play_res_x=1080, play_res_y=1920, style=None):
     """Generate ASS subtitle content with per-speaker colors and word-level timing."""
+    style_config = normalize_caption_style(style)
 
     # ASS header
     ass = f"""[Script Info]
@@ -135,21 +210,22 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         # ASS uses &HBBGGRR& format (BGR, not RGB)
         ass_color = f"&H00{b:02X}{g:02X}{r:02X}&"
         outline_color = "&H00000000&"
-        back_color = "&H80000000&"
+        alpha = int(round((100 - style_config["background_opacity"]) * 255 / 100))
+        back_color = f"&H{alpha:02X}000000&"
         style_name = speaker_id.replace(" ", "_")
-        # Font size scales with resolution: 72 at 1080p, ~96 at 1440p, ~144 at 4K
-        font_size = int(72 * play_res_x / 1080)
+        font_size = int(72 * style_config["font_scale"] * play_res_x / 1080)
+        bold_flag = -1 if style_config["bold"] else 0
         ass += (
-            f"Style: {style_name},Montserrat,{font_size},"
+            f"Style: {style_name},{style_config['font_family']},{font_size},"
             f"{ass_color},&H000000FF,{outline_color},{back_color},"
-            f"-1,0,0,0,100,100,0,0,1,4,2,2,30,30,120,1\n"
+            f"{bold_flag},0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},2,30,30,{style_config['margin_v']},1\n"
         )
 
     ass += "\n[Events]\n"
     ass += "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 
     # Group words into lines
-    lines = group_words_into_lines(words)
+    lines = group_words_into_lines(words, max_words=style_config["max_words"])
 
     for line in lines:
         if not line.get("enabled", True):
@@ -160,12 +236,18 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
         start = format_ass_time(line["start"])
         end = format_ass_time(line["end"])
 
-        # Word-by-word karaoke highlight using \kf tags
-        text_parts = []
-        for word in line["words"]:
-            duration_cs = max(1, int((word["end"] - word["start"]) * 100))
-            text_parts.append(f"{{\\kf{duration_cs}}}{word['text']}")
-        text = " ".join(text_parts)
+        if style_config["karaoke"]:
+            text_parts = []
+            for word in line["words"]:
+                duration_cs = max(1, int((word["end"] - word["start"]) * 100))
+                rendered_word = word["text"].upper() if style_config["all_caps"] else word["text"]
+                text_parts.append(f"{{\\kf{duration_cs}}}{rendered_word}")
+            text = " ".join(text_parts)
+        else:
+            text = " ".join(
+                word["text"].upper() if style_config["all_caps"] else word["text"]
+                for word in line["words"]
+            )
 
         ass += f"Dialogue: 0,{start},{end},{style},,0,0,0,,{text}\n"
 
@@ -183,7 +265,7 @@ def register_caption_routes(app):
         get_env,
         run_ffmpeg,
     )
-    from reel import reel_projects
+    from reel import load_reel_project, save_reel_project
 
     WHISPER_CACHE_DIR = str(RUNTIME_DIR / "whisper-models")
 
@@ -191,31 +273,8 @@ def register_caption_routes(app):
 
     @app.route("/api/reel/check-ml-deps")
     def reel_check_ml_deps():
-        result = {}
-        try:
-            import faster_whisper
-            result["faster_whisper"] = {"installed": True, "version": getattr(faster_whisper, "__version__", "unknown")}
-        except ImportError:
-            result["faster_whisper"] = {"installed": False}
-
-        try:
-            import pyannote.audio
-            result["pyannote_audio"] = {"installed": True, "version": getattr(pyannote.audio, "__version__", "unknown")}
-        except ImportError:
-            result["pyannote_audio"] = {"installed": False}
-
-        try:
-            import torch
-            result["torch"] = {
-                "installed": True,
-                "version": torch.__version__,
-                "cuda": torch.cuda.is_available(),
-                "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
-            }
-        except ImportError:
-            result["torch"] = {"installed": False}
-
-        return jsonify(result)
+        from app import get_caption_dependency_status
+        return jsonify(get_caption_dependency_status())
 
     # ── Transcription ──────────────────────────────────────────────
 
@@ -223,7 +282,7 @@ def register_caption_routes(app):
     def reel_transcribe():
         data = request.get_json()
         project_id = data.get("project_id", "")
-        project = reel_projects.get(project_id)
+        project = load_reel_project(project_id)
         if not project:
             return jsonify({"error": "Project not found"}), 404
 
@@ -296,6 +355,10 @@ def register_caption_routes(app):
                     }
                     project["captions"] = {"words": [], "language": language, "duration": 0}
                     project["speakers"] = {}
+                    project["caption_style"] = normalize_caption_style(project.get("caption_style"))
+                    project["export_file"] = None
+                    project["status"] = "captions_ready"
+                    save_reel_project(project_id)
                     return
 
                 # Speaker diarization (optional)
@@ -343,12 +406,20 @@ def register_caption_routes(app):
                     "duration": getattr(info, "duration", 0),
                 }
                 project["speakers"] = speakers
+                project["caption_style"] = normalize_caption_style(project.get("caption_style"))
+                project["export_file"] = None
+                project["status"] = "captions_ready"
 
                 # Save ASS file
-                ass_content = generate_ass_subtitles(words, speakers)
+                ass_content = generate_ass_subtitles(
+                    words,
+                    speakers,
+                    style=project.get("caption_style"),
+                )
                 ass_path = project_dir / "captions.ass"
                 with open(str(ass_path), "w", encoding="utf-8") as f:
                     f.write(ass_content)
+                save_reel_project(project_id)
 
                 jobs[job_id] = {
                     "status": "complete",
@@ -375,19 +446,24 @@ def register_caption_routes(app):
 
     @app.route("/api/reel/captions/<project_id>")
     def reel_get_captions(project_id):
-        project = reel_projects.get(project_id)
+        project = load_reel_project(project_id)
         if not project or not project.get("captions"):
             return jsonify({"error": "No captions available"}), 404
         return jsonify({
             "words": project["captions"]["words"],
             "speakers": project["speakers"],
             "language": project["captions"].get("language", "en"),
-            "lines": group_words_into_lines(project["captions"]["words"]),
+            "lines": group_words_into_lines(
+                project["captions"]["words"],
+                max_words=normalize_caption_style(project.get("caption_style")).get("max_words", 6),
+            ),
+            "style": normalize_caption_style(project.get("caption_style")),
+            "style_presets": CAPTION_STYLE_PRESETS,
         })
 
     @app.route("/api/reel/captions/<project_id>", methods=["PUT"])
     def reel_update_captions(project_id):
-        project = reel_projects.get(project_id)
+        project = load_reel_project(project_id)
         if not project:
             return jsonify({"error": "Project not found"}), 404
 
@@ -400,6 +476,13 @@ def register_caption_routes(app):
 
         if "speakers" in data:
             project["speakers"] = data["speakers"]
+        if "style" in data:
+            project["caption_style"] = normalize_caption_style(data.get("style"))
+        else:
+            project["caption_style"] = normalize_caption_style(project.get("caption_style"))
+
+        project["export_file"] = None
+        project["status"] = "captions_ready"
 
         # Regenerate ASS file
         if project.get("captions") and project.get("speakers"):
@@ -407,9 +490,11 @@ def register_caption_routes(app):
             ass_content = generate_ass_subtitles(
                 project["captions"]["words"],
                 project["speakers"],
+                style=project.get("caption_style"),
             )
             ass_path = project_dir / "captions.ass"
             with open(str(ass_path), "w", encoding="utf-8") as f:
                 f.write(ass_content)
+        save_reel_project(project_id)
 
         return jsonify({"status": "saved"})

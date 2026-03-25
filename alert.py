@@ -19,7 +19,6 @@ def register_alert_routes(app):
         jobs,
         DOWNLOADS_DIR,
         PROCESSING_DIR,
-        OUTPUT_DIR,
         FFMPEG,
         FFPROBE,
         YTDLP,
@@ -39,6 +38,7 @@ def register_alert_routes(app):
         parse_timestamp_to_seconds,
         probe_media_duration,
         download_separate_audio,
+        get_output_dir,
     )
 
     # ── Download clip ───────────────────────────────────────────────
@@ -639,7 +639,7 @@ def register_alert_routes(app):
 
             # ── Stage 6: Final compression - ONLY AAC encode happens here ──
             jobs[job_id] = {"status": "processing", "progress": 90, "stage": "Final encoding..."}
-            output_file = str(OUTPUT_DIR / f"alert_{job_id}.mp4")
+            output_file = str(get_output_dir() / f"alert_{job_id}.mp4")
             run_ffmpeg([
                 FFMPEG, "-i", final_input,
                 "-c:v", "libx264", "-crf", "23", "-preset", "medium",

@@ -18,6 +18,8 @@ const App = (() => {
     let dependencyInstallInFlight = false;
     let dependencyUpdateInFlight = false;
     let dependencyDropdownCloseHandlersBound = false;
+    let dependencyBannerTimer = null;
+    let storageConfig = null;
 
     // Audio source state
     let audioUrl = "";
@@ -377,15 +379,99 @@ const App = (() => {
         );
     }
 
-    function setDependencyBanner(messageHtml, instructionsHtml = "", showAsError = true) {
+    function hideDependencyBanner() {
+        if (dependencyBannerTimer) {
+            clearTimeout(dependencyBannerTimer);
+            dependencyBannerTimer = null;
+        }
+        hide("dep-banner");
+    }
+
+    function renderStorageConfig(config) {
+        storageConfig = config || null;
+        const input = $("output-dir-input");
+        const status = $("output-dir-status");
+        if (!input || !status || !storageConfig) return;
+        input.value = storageConfig.output_dir || "";
+        const usingDefault = !storageConfig.custom_output_dir;
+        status.textContent = usingDefault
+            ? `Finished exports save to the default folder: ${storageConfig.output_dir}`
+            : `Finished exports save to: ${storageConfig.output_dir}`;
+    }
+
+    async function loadStorageConfig() {
+        try {
+            const config = await api("/api/storage-config");
+            renderStorageConfig(config);
+        } catch (e) {
+            const status = $("output-dir-status");
+            if (status) status.textContent = "Could not load save location settings.";
+        }
+    }
+
+    async function applyOutputFolder() {
+        const input = $("output-dir-input");
+        if (!input) return;
+        const data = await api("/api/storage-config", {
+            method: "PUT",
+            body: JSON.stringify({ output_dir: input.value.trim() }),
+        });
+        if (data.error) {
+            setDependencyBanner(
+                "<strong>Save location update failed.</strong>",
+                escapeHtml(data.error),
+                true
+            );
+            return;
+        }
+        renderStorageConfig(data);
+    }
+
+    async function resetOutputFolder() {
+        const data = await api("/api/storage-config/reset", { method: "POST" });
+        if (data.error) {
+            setDependencyBanner(
+                "<strong>Save location reset failed.</strong>",
+                escapeHtml(data.error),
+                true
+            );
+            return;
+        }
+        renderStorageConfig(data);
+    }
+
+    async function chooseOutputFolder() {
+        const data = await api("/api/storage-config/choose", { method: "POST" });
+        if (data.status === "cancelled") return;
+        if (data.error) {
+            setDependencyBanner(
+                "<strong>Folder picker failed.</strong>",
+                `${escapeHtml(data.error)}<br>Paste a path into Save Location and click <strong>Use Path</strong> instead.`,
+                true
+            );
+            return;
+        }
+        renderStorageConfig(data);
+    }
+
+    function setDependencyBanner(messageHtml, instructionsHtml = "", showAsError = true, autoHideMs = 0) {
         const banner = $("dep-banner");
         const msg = $("dep-message");
         const instEl = $("dep-instructions");
         if (!banner || !msg || !instEl) return;
+        if (dependencyBannerTimer) {
+            clearTimeout(dependencyBannerTimer);
+            dependencyBannerTimer = null;
+        }
         msg.innerHTML = messageHtml;
         instEl.innerHTML = instructionsHtml;
         banner.classList.toggle("banner-error", showAsError);
         show(banner);
+        if (autoHideMs > 0) {
+            dependencyBannerTimer = setTimeout(() => {
+                hideDependencyBanner();
+            }, autoHideMs);
+        }
     }
 
     function setPanelOpen(panelId, isOpen) {
@@ -458,10 +544,16 @@ const App = (() => {
     function renderDependencyStatus(deps) {
         const missing = [];
         const instructions = [];
+        const captioning = deps.captioning || {};
+        const captionRequiredMissing = captioning.required_missing || [];
+        const captionOptionalMissing = captioning.optional_missing || [];
 
         const ffmpegStatus = $("dep-ffmpeg-status");
         const ytdlpStatus = $("dep-ytdlp-status");
         const denoStatus = $("dep-deno-status");
+        const fasterWhisperStatus = $("dep-faster-whisper-status");
+        const torchStatus = $("dep-torch-status");
+        const pyannoteStatus = $("dep-pyannote-status");
         const installBtn = $("auto-install-deps-btn");
         const updateBtn = $("update-ytdlp-btn");
 
@@ -496,6 +588,46 @@ const App = (() => {
             }
         }
 
+        if (fasterWhisperStatus) {
+            if (captioning.faster_whisper?.installed) {
+                const version = captioning.faster_whisper.version || "installed";
+                fasterWhisperStatus.textContent = `✓ ${version}`;
+                fasterWhisperStatus.className = "dep-status installed";
+            } else {
+                fasterWhisperStatus.textContent = "✗ Needed";
+                fasterWhisperStatus.className = "dep-status missing";
+            }
+        }
+
+        if (torchStatus) {
+            if (captioning.torch?.installed) {
+                const device = captioning.torch.cuda ? "CUDA" : "CPU";
+                torchStatus.textContent = `✓ ${device}`;
+                torchStatus.className = "dep-status installed";
+            } else {
+                torchStatus.textContent = "✗ Needed";
+                torchStatus.className = "dep-status missing";
+            }
+        }
+
+        if (pyannoteStatus) {
+            if (captioning.pyannote_audio?.installed) {
+                const version = captioning.pyannote_audio.version || "installed";
+                pyannoteStatus.textContent = `✓ ${version}`;
+                pyannoteStatus.className = "dep-status installed";
+            } else {
+                pyannoteStatus.textContent = "⚠ Optional";
+                pyannoteStatus.className = "dep-status missing";
+            }
+        }
+
+        if (captionRequiredMissing.length > 0) {
+            instructions.push("Captions: Install `faster-whisper` and `torch` in the same Python environment as the app. Example: `pip install faster-whisper torch`.");
+        }
+        if (captionOptionalMissing.includes("pyannote_audio")) {
+            instructions.push("Speaker labels: Install `pyannote.audio` if you want diarization, then provide a Hugging Face token in Reel Maker.");
+        }
+
         if (installBtn) {
             const shouldShowInstall = deps.auto_install_available && (missing.length > 0 || !deps.deno?.installed);
             installBtn.classList.toggle("hidden", !shouldShowInstall);
@@ -522,7 +654,7 @@ const App = (() => {
             } else if (deps.ytdlp_update?.status === "updating") {
                 depPillValue.textContent = "Updating yt-dlp...";
             } else if (missing.length === 0) {
-                depPillValue.textContent = "Ready";
+                depPillValue.textContent = captionRequiredMissing.length > 0 ? "Captions Need Setup" : "Ready";
             } else {
                 depPillValue.textContent = `Needs Setup (${missing.length})`;
             }
@@ -540,8 +672,15 @@ const App = (() => {
                 `<strong>How to fix:</strong><br>${instructions.join("<br>")}`,
                 true
             );
+        } else if (captionRequiredMissing.length > 0) {
+            setPanelOpen("dependency-settings-panel", true);
+            setDependencyBanner(
+                "<strong>Reel captioning needs Python packages.</strong>",
+                `<strong>How to fix:</strong><br>${instructions.join("<br>")}`,
+                false
+            );
         } else {
-            hide("dep-banner");
+            hideDependencyBanner();
         }
 
         return missing;
@@ -632,7 +771,8 @@ const App = (() => {
                 setDependencyBanner(
                     "<strong>yt-dlp is ready.</strong>",
                     escapeHtml(updateMessage || "Update complete."),
-                    false
+                    false,
+                    4000
                 );
             }
         } catch (e) {
@@ -669,6 +809,7 @@ const App = (() => {
 
     async function init() {
         lockExportForCurrentWorkflow();
+        await loadStorageConfig();
 
         // Check dependencies
         try {
@@ -1984,6 +2125,9 @@ const App = (() => {
         shutdownApp,
         installMissingDependencies,
         updateYtdlp,
+        chooseOutputFolder,
+        applyOutputFolder,
+        resetOutputFolder,
         allowDependencyAutoDownload,
         useManualDependencySetup,
         toggleSettingsPanel,
