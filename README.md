@@ -54,11 +54,11 @@ You need **Python 3.10 or newer** to run or build this project.
 
 ### EXE Dependency Behavior (One-Click)
 - On Windows, `alert-alert.exe` auto-checks dependencies at launch.
-- If `ffmpeg`, `ffprobe`, or `yt-dlp` are missing, the app downloads them into a user-local runtime folder (no admin required).
-- Manual fallback remains available in **Step 1 > Dependency Setup & Troubleshooting**.
+- If `ffmpeg`, `ffprobe`, `yt-dlp`, or `deno` are missing, the app shows a consent prompt before downloading them into a user-local runtime folder (no admin required).
+- Manual fallback remains available in **Dependency Setup (top-right)**.
 - Auto-install requires outbound internet access to GitHub and FFmpeg mirrors.
-- `deno` is **optional** and only helps `yt-dlp` handle certain advanced YouTube challenge/protection scenarios.
-- Without `deno`, local files and most URLs still work normally. Installing `deno` mainly improves success rate on some harder YouTube cases.
+- `deno` remains **optional** and only helps `yt-dlp` handle certain advanced YouTube challenge/protection scenarios.
+- If `deno` auto-install fails, the app still works for local files and most URLs.
 
 ### Step-by-Step Installation Guide (For Beginners)
 
@@ -93,7 +93,7 @@ If you see errors like `'pip' is not recognized` or `'winget' is not recognized`
 - **For pip:** Reinstall Python and ensure **Add Python to PATH** is checked.
 - **For winget:** Update Windows and install [App Installer](https://apps.microsoft.com/store/detail/app-installer/9NBLGGH4NNS1) from Microsoft Store.
 
-> **Tip:** Step 1 in the app shows dependency health and direct troubleshooting actions.
+> **Tip:** Use **Dependency Setup** (top-right) to view dependency health and troubleshooting actions.
 
 ### Python Dependencies (for running from source)
 
@@ -165,9 +165,9 @@ Settings are integrated directly into workflow steps and can also be opened from
 |---------|---------|-------------|
 | **Resolution** | 480p, 720p, 1080p | Output video resolution (Step 4) |
 | **End Buffer** | 0-5 seconds | Adds still frame buffer at clip end (Step 4) |
-| **Normalize Audio** | On/Off | EBU R128 loudness normalization (Step 2) |
-| **Audio Fade Length** | 0.20s, 0.35s, 0.50s | Global fade duration used by clip fade mode (Step 2/3) |
-| **Dependencies** | Auto/manual | Runtime install status and repair actions (Step 1) |
+| **Normalize Audio** | On/Off | EBU R128 loudness normalization (Step 3) |
+| **Audio Fade Length** | 0.20s, 0.35s, 0.50s, 1.00s | Fade duration used by clip fade mode (Step 3) |
+| **Dependencies** | Auto/manual | Runtime install status and repair actions (Dependency Setup, top-right) |
 
 ---
 
@@ -187,14 +187,14 @@ The output is generated in the `dist/` folder.
 ## Troubleshooting
 
 ### "FFmpeg not found"
-**Solution:** In **Step 1 > Dependency Setup & Troubleshooting**, click **Auto Install Missing** first. If needed, install manually:
+**Solution:** In **Dependency Setup (top-right)**, click **Auto Install Missing** first. If needed, install manually:
 ```bash
 winget install Gyan.FFmpeg
 ```
 Or download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH.
 
 ### "yt-dlp not found"
-**Solution:** In **Step 1 > Dependency Setup & Troubleshooting**, click **Auto Install Missing** first. If needed, install manually:
+**Solution:** In **Dependency Setup (top-right)**, click **Auto Install Missing** first. If needed, install manually:
 ```bash
 pip install -U yt-dlp
 ```
@@ -203,13 +203,13 @@ pip install -U yt-dlp
 - Ensure the URL is a direct video link (not a playlist)
 - The app auto-cleans YouTube playlist/radio params
 - If YouTube protection blocks formats, update yt-dlp and retry
-- If protected YouTube URLs keep failing, install optional `deno` (`winget install DenoLand.Deno`) and retry
+- After you allow auto-download, the app auto-attempts optional `deno`; if protected YouTube URLs still fail, install/reinstall with `winget install DenoLand.Deno` and retry
 
 ### Port 5000 already in use
 Another application is already using port 5000. Close it and restart Alert! Alert!.
 
 ### Auto-install fails repeatedly
-- Verify internet connectivity and retry from Step 1
+- Verify internet connectivity and retry from **Dependency Setup** (top-right)
 - Check firewall/proxy/enterprise policies for GitHub and FFmpeg hosts
 - Check antivirus quarantine history and allow the app runtime directory
 - Install dependencies manually, then restart the app

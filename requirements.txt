@@ -3,3 +3,9 @@ yt-dlp>=2023.0.0
 Pillow>=12.0
 typing_extensions
 waitress
+
+# Optional: Reel Maker caption pipeline (install separately)
+# pip install faster-whisper pyannote.audio torch
+# faster-whisper>=1.0.0
+# pyannote.audio>=3.1
+# torch>=2.0

@@ -12,14 +12,59 @@
     <header>
         <div class="header-brand">
             <h1 class="logo-text">Alert<span class="ascii-bang" id="ascii-bang-1">!</span> Alert<span class="ascii-bang" id="ascii-bang-2">!</span></h1>
+            <div class="mode-toggle" id="mode-toggle">
+                <button class="mode-btn active" id="mode-alert-btn" onclick="switchMode('alert')">Alert Creator</button>
+                <button class="mode-btn" id="mode-reel-btn" onclick="switchMode('reel')">Reel Maker</button>
+            </div>
         </div>
         <div class="header-actions">
-            <button id="dependency-settings-toggle" class="setting-pill" type="button" data-panel="dependency-settings-panel"
-                onclick="App.openSettingsPanel('dependency-settings-panel', 'step-1')">
-                <span class="pill-label">Dependency Setup</span>
-                <span id="dependency-pill-value" class="pill-value">Checking...</span>
-                <span class="pill-caret">▾</span>
-            </button>
+            <div class="navbar-dropdown">
+                <button id="dependency-settings-toggle" class="setting-pill" type="button" data-panel="dependency-settings-panel"
+                    onclick="App.toggleSettingsPanel('dependency-settings-panel')">
+                    <span class="pill-label">Dependency Setup</span>
+                    <span id="dependency-pill-value" class="pill-value">Checking...</span>
+                    <span class="pill-caret">▾</span>
+                </button>
+                <div id="dependency-settings-panel" class="workflow-settings-panel navbar-settings-panel">
+                    <div class="settings-section">
+                        <label class="settings-label">Runtime Dependencies</label>
+                        <div class="dep-links">
+                            <a href="https://ffmpeg.org/download.html" target="_blank" class="dep-link">
+                                <span class="dep-icon">🎬</span>
+                                <span class="dep-name">FFmpeg</span>
+                                <span class="dep-status" id="dep-ffmpeg-status">checking...</span>
+                            </a>
+                            <a href="https://github.com/yt-dlp/yt-dlp/releases/latest" target="_blank" class="dep-link">
+                                <span class="dep-icon">📥</span>
+                                <span class="dep-name">yt-dlp</span>
+                                <span class="dep-status" id="dep-ytdlp-status">checking...</span>
+                            </a>
+                            <a href="https://deno.com/" target="_blank" class="dep-link">
+                                <span class="dep-icon">🧩</span>
+                                <span class="dep-name">Deno (Optional, Auto-Install)</span>
+                                <span class="dep-status" id="dep-deno-status">checking...</span>
+                            </a>
+                        </div>
+                        <button id="auto-install-deps-btn" class="settings-reset hidden" type="button"
+                            onclick="App.installMissingDependencies(true)">Auto Install Missing</button>
+                        <button id="update-ytdlp-btn" class="settings-reset hidden" type="button"
+                            onclick="App.updateYtdlp()">Update yt-dlp (1-click)</button>
+                        <div class="settings-hint">
+                            <p><strong>How Auto Download Works</strong></p>
+                            <p>On launch, the app checks FFmpeg/ffprobe + yt-dlp (required) and Deno (optional). If anything is missing, it asks permission before downloading tools to your user runtime folder (no admin required).</p>
+                            <p><strong>Troubleshooting Ideas</strong></p>
+                            <ol style="margin-left: 1.2rem; margin-top: 0.5rem; text-align: left;">
+                                <li>If you chose <strong>Manual Install Only</strong>, click <strong>Auto Install Missing</strong> any time to opt in and retry.</li>
+                                <li>If auto-install fails, confirm internet access to GitHub/FFmpeg hosts, then click <strong>Auto Install Missing</strong> again.</li>
+                                <li>If only Deno fails, the app still works normally; install Deno manually for harder YouTube challenge/protection cases.</li>
+                                <li>If corporate/firewall rules block downloads, manually install FFmpeg, yt-dlp, and Deno using the links above.</li>
+                                <li>If security software quarantines binaries, allow the runtime folder and retry, then restart the app.</li>
+                                <li>For YouTube extraction issues, use <strong>Update yt-dlp (1-click)</strong> before retrying.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <button id="navbar-reset-btn" class="setting-pill" type="button" onclick="App.resetSettings()">
                 <span class="pill-label">Reset to Defaults</span>
             </button>
@@ -32,7 +77,7 @@
         <p id="dep-instructions" class="dep-instructions"></p>
     </div>
 
-    <main class="main-layout">
+    <main class="main-layout" id="alert-workflow">
         <!-- Floating Video Preview (appears after validation) -->
         <aside class="video-sidebar hidden" id="video-sidebar">
             <div class="video-preview-sticky">
@@ -41,6 +86,11 @@
                     <img id="crop-image" class="hidden" alt="Static image crop preview"
                         style="display:block;max-width:100%;max-height:calc(100vh - 250px);width:auto;height:auto;object-fit:contain;pointer-events:none;">
                     <div id="crop-overlay" class="hidden"></div>
+                </div>
+                <div class="volume-control" id="preview-timeline-control">
+                    <span class="volume-icon">↔</span>
+                    <input type="range" id="preview-timeline-slider" min="0" max="0" value="0" step="0.01" disabled>
+                    <span id="preview-timeline-value" class="volume-value timeline-value">0:00.00 / 0:00.00</span>
                 </div>
                 <div class="preview-controls" id="preview-controls">
                     <button id="preview-play-btn" class="control-btn">▶ Play</button>
@@ -98,41 +148,6 @@
                         <span class="spinner"></span> <span id="download-status-text">Downloading...</span>
                     </div>
 
-                    <div id="dependency-settings-panel" class="workflow-settings-panel">
-                        <div class="settings-section">
-                            <label class="settings-label">Runtime Dependencies</label>
-                            <div class="dep-links">
-                                <a href="https://ffmpeg.org/download.html" target="_blank" class="dep-link">
-                                    <span class="dep-icon">🎬</span>
-                                    <span class="dep-name">FFmpeg</span>
-                                    <span class="dep-status" id="dep-ffmpeg-status">checking...</span>
-                                </a>
-                                <a href="https://github.com/yt-dlp/yt-dlp/releases/latest" target="_blank" class="dep-link">
-                                    <span class="dep-icon">📥</span>
-                                    <span class="dep-name">yt-dlp</span>
-                                    <span class="dep-status" id="dep-ytdlp-status">checking...</span>
-                                </a>
-                                <a href="https://deno.com/" target="_blank" class="dep-link">
-                                    <span class="dep-icon">🧩</span>
-                                    <span class="dep-name">Deno (Optional)</span>
-                                    <span class="dep-status" id="dep-deno-status">checking...</span>
-                                </a>
-                            </div>
-                            <button id="auto-install-deps-btn" class="settings-reset hidden" type="button"
-                                onclick="App.installMissingDependencies(true)">Auto Install Missing</button>
-                            <div class="settings-hint">
-                                <p><strong>How Auto Download Works</strong></p>
-                                <p>The app checks dependencies on launch and can auto-download missing tools into your user profile runtime folder (no admin required).</p>
-                                <p><strong>Troubleshooting Ideas</strong></p>
-                                <ol style="margin-left: 1.2rem; margin-top: 0.5rem; text-align: left;">
-                                    <li>If auto-install fails, click <strong>Auto Install Missing</strong> again after confirming internet access.</li>
-                                    <li>If corporate/firewall rules block downloads, manually install FFmpeg and yt-dlp using the links above.</li>
-                                    <li>If security software quarantines binaries, allow the runtime folder and retry.</li>
-                                    <li>After manual installs, restart the app so dependency checks refresh cleanly.</li>
-                                </ol>
-                            </div>
-                        </div>
-                    </div>
                     <div id="step1-error" class="error-msg hidden"></div>
                 </div>
             </section>
@@ -141,46 +156,11 @@
             <section class="step disabled" id="step-2">
                 <h2><span class="step-num">2</span> Options</h2>
                 <div class="step-content">
-                    <div class="settings-launch-row">
-                        <button id="audio-settings-toggle" class="setting-pill" type="button" data-panel="audio-settings-panel"
-                            onclick="App.toggleSettingsPanel('audio-settings-panel')">
-                            <span class="pill-label">Audio Settings</span>
-                            <span id="audio-pill-value" class="pill-value">Normalize On · 0.35s</span>
-                            <span class="pill-caret">▾</span>
-                        </button>
-                    </div>
-
-                    <div id="audio-settings-panel" class="workflow-settings-panel">
-                        <div class="settings-section">
-                            <label class="settings-label">
-                                Audio Normalization
-                                <span class="tooltip-icon"
-                                    data-tooltip="Automatically adjusts audio levels to broadcast standard (-16 LUFS). Disable to preserve original audio levels.">?</span>
-                            </label>
-                            <div class="settings-toggle">
-                                <input type="checkbox" id="setting-normalize-audio" checked>
-                                <label for="setting-normalize-audio">Normalize audio levels</label>
-                            </div>
-                        </div>
-                        <div class="settings-section">
-                            <label class="settings-label">
-                                Fade Length
-                                <span class="tooltip-icon"
-                                    data-tooltip="Global default fade duration for clip start/end fades. 0.35s is the middle option.">?</span>
-                            </label>
-                            <select id="setting-audio-fade-duration" class="settings-select">
-                                <option value="0.20">Short (0.20s)</option>
-                                <option value="0.35" selected>Medium (0.35s)</option>
-                                <option value="0.50">Long (0.50s)</option>
-                            </select>
-                        </div>
-                    </div>
-
                     <!-- Separate Audio Source Toggle -->
-                    <div class="audio-source-toggle">
+                    <div class="audio-source-toggle first-audio-toggle">
                         <label class="toggle-label">
                             <input type="checkbox" id="use-separate-audio">
-                            <span class="toggle-text">Use separate audio source</span>
+                            <span class="toggle-text">Use different audio with this video</span>
                         </label>
                     </div>
 
@@ -219,17 +199,25 @@
                             </div>
                         </div>
 
-                        <div class="input-row">
-                            <label>
-                                Audio Start
-                                <input type="text" id="audio-start-input" placeholder="0:00" class="time-input">
-                            </label>
-                            <label>
-                                Audio End
-                                <input type="text" id="audio-end-input" placeholder="0:15" class="time-input">
-                            </label>
-                            <span id="audio-clip-duration" class="info-label"></span>
+                        <div class="audio-trim-controls">
+                            <div class="trim-slider-row">
+                                <label class="trim-label" for="audio-trim-start-slider">
+                                    <span>Trim Start</span>
+                                    <input type="range" id="audio-trim-start-slider" min="0" max="14" value="0" step="0.01" disabled>
+                                    <span id="audio-trim-start-val" class="trim-val">0:00.00</span>
+                                </label>
+                            </div>
+                            <div class="trim-slider-row">
+                                <label class="trim-label" for="audio-trim-end-slider">
+                                    <span>Trim End</span>
+                                    <input type="range" id="audio-trim-end-slider" min="0" max="14" value="14" step="0.01" disabled>
+                                    <span id="audio-trim-end-val" class="trim-val">0:14.00</span>
+                                </label>
+                            </div>
+                            <p id="audio-clip-duration" class="info-label">Audio: 0:14.00</p>
                         </div>
+                        <input type="hidden" id="audio-start-input" value="0:00.00">
+                        <input type="hidden" id="audio-end-input" value="0:14.00">
                         <div id="audio-url-error" class="error-msg hidden"></div>
                     </div>
 
@@ -237,7 +225,7 @@
                     <div class="audio-source-toggle">
                         <label class="toggle-label">
                             <input type="checkbox" id="use-static-image">
-                            <span class="toggle-text">Use static image with audio only</span>
+                            <span class="toggle-text">Use a different image or video with this audio</span>
                         </label>
                     </div>
 
@@ -245,10 +233,10 @@
                     <div id="static-image-section" class="hidden audio-source-section">
                         <div class="audio-source-header">
                             <span class="audio-icon">🖼️</span>
-                            <span>Static Image</span>
+                            <span>Different Image or Video</span>
                         </div>
                         <div class="input-row">
-                            <input type="file" id="static-image-input" accept="image/*">
+                            <input type="file" id="static-image-input" accept="image/*,video/*">
                         </div>
                         <div id="image-preview-container" class="hidden">
                             <img id="static-image-preview" alt="Preview">
@@ -267,7 +255,8 @@
                         <div class="ratio-row">
                             <span class="slider-label">Ratio</span>
                             <div class="ratio-buttons" id="ratio-buttons">
-                                <button class="ratio-btn active" data-ratio="1:1">1:1</button>
+                                <button class="ratio-btn active" data-ratio="original">Original</button>
+                                <button class="ratio-btn" data-ratio="1:1">1:1</button>
                                 <button class="ratio-btn" data-ratio="16:9">16:9</button>
                                 <button class="ratio-btn" data-ratio="9:16">9:16</button>
                                 <button class="ratio-btn" data-ratio="4:3">4:3</button>
@@ -290,31 +279,47 @@
                         <div class="trim-slider-row">
                             <label class="trim-label">
                                 <span>Trim Start</span>
-                                <input type="range" id="trim-start-slider" min="0" max="100" value="0" step="0.1">
-                                <span id="trim-start-val" class="trim-val">0:00</span>
+                                <input type="range" id="trim-start-slider" min="0" max="100" value="0" step="0.01">
+                                <span id="trim-start-val" class="trim-val">0:00.00</span>
                             </label>
                         </div>
                         <div class="trim-slider-row">
                             <label class="trim-label">
                                 <span>Trim End</span>
-                                <input type="range" id="trim-end-slider" min="0" max="100" value="100" step="0.1">
-                                <span id="trim-end-val" class="trim-val">0:00</span>
+                                <input type="range" id="trim-end-slider" min="0" max="100" value="100" step="0.01">
+                                <span id="trim-end-val" class="trim-val">0:00.00</span>
                             </label>
                         </div>
                         <div class="trim-duration-display">
-                            <span id="trim-duration">Duration: 0:00</span>
+                            <span id="trim-duration">Duration: 0:00.00</span>
                         </div>
                         <div class="trim-slider-row">
-                            <label class="trim-label" for="audio-fade-mode">
-                                <span>Audio Fade</span>
-                                <select id="audio-fade-mode" class="trim-select">
-                                    <option value="none" selected>Off</option>
-                                    <option value="start">Start</option>
-                                    <option value="end">End</option>
-                                    <option value="both">Both</option>
-                                </select>
-                            </label>
-                            <p id="audio-fade-note" class="trim-fade-note">Fade length set in Audio Processing Settings (Step 2)</p>
+                            <div class="trim-audio-options">
+                                <label class="trim-label trim-inline" for="audio-fade-mode">
+                                    <span>Audio Fade</span>
+                                    <select id="audio-fade-mode" class="trim-select">
+                                        <option value="none" selected>Off</option>
+                                        <option value="start">Start</option>
+                                        <option value="end">End</option>
+                                        <option value="both">Both</option>
+                                    </select>
+                                </label>
+                                <label class="trim-label trim-inline" for="setting-audio-fade-duration">
+                                    <span>Fade Length</span>
+                                    <select id="setting-audio-fade-duration" class="trim-select">
+                                        <option value="0.20">Short (0.20s)</option>
+                                        <option value="0.35" selected>Medium (0.35s)</option>
+                                        <option value="0.50">Long (0.50s)</option>
+                                        <option value="1.00">Extra (1.00s)</option>
+                                    </select>
+                                </label>
+                                <label class="trim-checkbox" for="setting-normalize-audio">
+                                    <input type="checkbox" id="setting-normalize-audio" checked>
+                                    <span>Normalize Audio</span>
+                                    <span class="tooltip-icon"
+                                        data-tooltip="Matches loudness to a consistent target (~-16 LUFS) so alerts are more even in volume.">?</span>
+                                </label>
+                            </div>
                         </div>
                     </div>
 
@@ -326,16 +331,7 @@
             <section class="step disabled" id="step-4">
                 <h2><span class="step-num">4</span> Process &amp; Export</h2>
                 <div class="step-content">
-                    <div class="settings-launch-row">
-                        <button id="output-settings-toggle" class="setting-pill" type="button" data-panel="output-settings-panel"
-                            onclick="App.toggleSettingsPanel('output-settings-panel')">
-                            <span class="pill-label">Output</span>
-                            <span id="output-pill-value" class="pill-value">720p · Buffer 2s</span>
-                            <span class="pill-caret">▾</span>
-                        </button>
-                    </div>
-
-                    <div id="output-settings-panel" class="workflow-settings-panel">
+                    <div id="output-settings-panel" class="workflow-settings-panel open">
                         <div class="settings-section">
                             <label class="settings-label">Output Resolution</label>
                             <select id="setting-resolution" class="settings-select">
@@ -376,6 +372,165 @@
         </div>
     </main>
 
+    <!-- ── Reel Maker Workflow ── -->
+    <main class="main-layout reel-layout hidden" id="reel-workflow">
+        <!-- Reel Video Preview -->
+        <aside class="video-sidebar hidden" id="reel-video-sidebar">
+            <div class="video-preview-sticky">
+                <div id="reel-preview-container">
+                    <video id="reel-preview-video" muted playsinline></video>
+                </div>
+                <div class="preview-controls" id="reel-preview-controls">
+                    <button id="reel-play-btn" class="control-btn" onclick="ReelMaker.togglePlay()">&#9654; Play</button>
+                    <button id="reel-mute-btn" class="control-btn" onclick="ReelMaker.toggleMute()">&#128263; Unmute</button>
+                </div>
+            </div>
+        </aside>
+
+        <div class="workflow-steps">
+            <!-- Step R1: VOD Source -->
+            <section class="step" id="reel-step-1">
+                <h2><span class="step-num">1</span> VOD Source</h2>
+                <div class="step-content">
+                    <div class="source-toggle">
+                        <button class="source-btn active" id="reel-source-url-btn" onclick="ReelMaker.setSourceType('url')">URL</button>
+                        <button class="source-btn" id="reel-source-file-btn" onclick="ReelMaker.setSourceType('file')">Local File</button>
+                    </div>
+
+                    <div id="reel-url-section">
+                        <div class="input-row">
+                            <input type="text" id="reel-url-input" placeholder="Paste VOD URL (YouTube, TikTok, etc.)..." spellcheck="false">
+                            <button id="reel-validate-btn" onclick="ReelMaker.validateUrl()">Load VOD</button>
+                        </div>
+                    </div>
+
+                    <div id="reel-file-section" class="hidden">
+                        <div class="file-upload-area" id="reel-file-drop-zone">
+                            <input type="file" id="reel-video-input" accept="video/*" class="hidden">
+                            <div class="file-upload-content">
+                                <span class="file-upload-icon">&#128193;</span>
+                                <p>Drag & drop video file here</p>
+                                <p class="file-upload-hint">or <button type="button" class="link-btn" onclick="document.getElementById('reel-video-input').click()">browse files</button></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="reel-vod-info" class="hidden">
+                        <p class="info-label">Title: <span id="reel-vod-title"></span></p>
+                        <p class="info-label">Duration: <span id="reel-vod-duration"></span></p>
+                    </div>
+                    <div id="reel-step1-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+
+            <!-- Step R2: Clip Selector -->
+            <section class="step disabled" id="reel-step-2">
+                <h2><span class="step-num">2</span> Clips</h2>
+                <div class="step-content">
+                    <p class="settings-hint">Add timestamp ranges from the VOD to include in your reel.</p>
+                    <div id="reel-clip-list" class="clip-list"></div>
+                    <button id="reel-add-clip-btn" class="secondary-btn" onclick="ReelMaker.addClip()">+ Add Clip</button>
+
+                    <div id="reel-clip-actions" class="hidden" style="margin-top:12px;">
+                        <button id="reel-download-clips-btn" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch Clips</button>
+                        <div id="reel-download-status" class="hidden" style="margin-top:8px;">
+                            <div class="progress-bar-bg">
+                                <div id="reel-download-bar" class="progress-bar-fill" style="width:0%"></div>
+                            </div>
+                            <p id="reel-download-status-text" class="info-label">Starting...</p>
+                        </div>
+                    </div>
+                    <div id="reel-step2-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+
+            <!-- Step R3: Captions -->
+            <section class="step disabled" id="reel-step-3">
+                <h2><span class="step-num">3</span> Captions</h2>
+                <div class="step-content">
+                    <div id="reel-transcribe-controls">
+                        <div class="input-row">
+                            <select id="reel-caption-language">
+                                <option value="en" selected>English</option>
+                                <option value="de">German</option>
+                                <option value="es">Spanish</option>
+                                <option value="fr">French</option>
+                                <option value="ja">Japanese</option>
+                                <option value="ko">Korean</option>
+                                <option value="pt">Portuguese</option>
+                                <option value="zh">Chinese</option>
+                            </select>
+                            <select id="reel-whisper-model">
+                                <option value="tiny">Tiny (fastest)</option>
+                                <option value="base">Base</option>
+                                <option value="small">Small</option>
+                                <option value="medium">Medium</option>
+                                <option value="large-v3" selected>Large v3 (best)</option>
+                            </select>
+                            <button id="reel-transcribe-btn" onclick="ReelMaker.transcribe()" disabled>Auto-Transcribe</button>
+                        </div>
+                        <div id="reel-hf-token-section">
+                            <p class="settings-hint">Speaker identification requires a free
+                                <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">HuggingFace token</a>.
+                                Without it, all text appears as one speaker.</p>
+                            <input type="text" id="reel-hf-token" placeholder="hf_xxxx... (optional)" spellcheck="false">
+                        </div>
+                    </div>
+
+                    <div id="reel-transcribe-progress" class="hidden">
+                        <div class="progress-bar-bg">
+                            <div id="reel-transcribe-bar" class="progress-bar-fill" style="width:0%"></div>
+                        </div>
+                        <p id="reel-transcribe-status" class="info-label">Starting...</p>
+                    </div>
+
+                    <!-- Caption editor (shown after transcription) -->
+                    <div id="reel-caption-editor" class="hidden">
+                        <div class="caption-speaker-panel" id="reel-speaker-panel"></div>
+                        <div class="caption-lines-container">
+                            <div class="caption-toolbar">
+                                <button class="secondary-btn" onclick="CaptionEditor.enableAll()">Enable All</button>
+                                <button class="secondary-btn" onclick="CaptionEditor.disableAll()">Disable All</button>
+                                <button onclick="CaptionEditor.save()">Save Captions</button>
+                            </div>
+                            <div id="reel-caption-lines" class="caption-lines"></div>
+                        </div>
+                    </div>
+                    <div id="reel-step3-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+
+            <!-- Step R4: Export -->
+            <section class="step disabled" id="reel-step-4">
+                <h2><span class="step-num">4</span> Export <span class="settings-hint">(coming soon)</span></h2>
+                <div class="step-content">
+                    <div class="workflow-settings-panel open">
+                        <div class="settings-section">
+                            <label class="settings-label">Output Resolution</label>
+                            <select id="reel-setting-resolution" class="settings-select">
+                                <option value="1080">1080p (1080x1920)</option>
+                                <option value="1440">1440p (1440x2560)</option>
+                                <option value="2160" selected>4K (2160x3840)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="settings-hint">Clip stitching and caption prep are live. Vertical reel export is not wired yet.</p>
+                    <button id="reel-export-btn" onclick="ReelMaker.exportReel()" disabled>Export Reel (Coming Soon)</button>
+                    <div id="reel-export-progress" class="hidden">
+                        <div class="progress-bar-bg">
+                            <div id="reel-export-bar" class="progress-bar-fill" style="width:0%"></div>
+                        </div>
+                        <p id="reel-export-status" class="info-label">Starting...</p>
+                    </div>
+                    <div id="reel-export-download" class="hidden">
+                        <button class="export-btn" onclick="ReelMaker.downloadReel()">Download Reel</button>
+                    </div>
+                    <div id="reel-step4-error" class="error-msg hidden"></div>
+                </div>
+            </section>
+        </div>
+    </main>
+
     <footer class="app-footer">
         <p>
             Made with <span class="footer-heart">&lt;3</span> for streamers by
@@ -389,6 +544,27 @@
 
     <script src="/static/js/crop.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/reel.js"></script>
+    <script src="/static/js/caption-editor.js"></script>
+    <script>
+        function switchMode(mode) {
+            const alertWorkflow = document.getElementById('alert-workflow');
+            const reelWorkflow = document.getElementById('reel-workflow');
+            const alertBtn = document.getElementById('mode-alert-btn');
+            const reelBtn = document.getElementById('mode-reel-btn');
+            if (mode === 'reel') {
+                alertWorkflow.classList.add('hidden');
+                reelWorkflow.classList.remove('hidden');
+                alertBtn.classList.remove('active');
+                reelBtn.classList.add('active');
+            } else {
+                reelWorkflow.classList.add('hidden');
+                alertWorkflow.classList.remove('hidden');
+                reelBtn.classList.remove('active');
+                alertBtn.classList.add('active');
+            }
+        }
+    </script>
 </body>
 
 </html>

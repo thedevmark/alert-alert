@@ -1,7 +1,7 @@
 /**
  * Interactive crop preview component.
  * Displays a video frame with a draggable, resizable overlay.
- * Supports multiple aspect ratios: 1:1, 16:9, 9:16, 4:3
+ * Supports multiple aspect ratios: original, 1:1, 16:9, 9:16, 4:3
  * The area outside the crop is darkened.
  * Zoom slider controls the crop size (smaller = more zoomed in).
  */
@@ -32,9 +32,9 @@ class CropPreview {
         this.displayOffsetY = 0;
         this.scale = 1;
 
-        // Aspect ratio (width:height) - default 1:1
+        // Aspect ratio (width:height) - default original source ratio
         this.aspectRatio = 1; // width / height
-        this.ratioLabel = "1:1";
+        this.ratioLabel = "original";
 
         // Zoom: 100% = max size that fits, lower = smaller crop (more zoomed)
         this.zoomPct = 100;
@@ -182,6 +182,9 @@ class CropPreview {
         this.activeMedia = this.video;
         this.videoWidth = videoWidth;
         this.videoHeight = videoHeight;
+        if (this.ratioLabel === "original") {
+            this.aspectRatio = this._resolveOriginalAspectRatio();
+        }
 
         // Show video and overlay
         this.video.classList.remove("hidden");
@@ -222,6 +225,9 @@ class CropPreview {
         const finalize = () => {
             this.videoWidth = imageWidth || this.image.naturalWidth || 1;
             this.videoHeight = imageHeight || this.image.naturalHeight || 1;
+            if (this.ratioLabel === "original") {
+                this.aspectRatio = this._resolveOriginalAspectRatio();
+            }
             this._syncDisplayMetrics();
             this._applyZoom();
             this.overlay.classList.remove("hidden");
@@ -308,13 +314,30 @@ class CropPreview {
      * Set aspect ratio from string like "1:1", "16:9", etc.
      */
     setAspectRatio(ratioStr) {
+        if (ratioStr === "original") {
+            this.aspectRatio = this._resolveOriginalAspectRatio();
+            this.ratioLabel = "original";
+            if (this.displayWidth > 0) {
+                this._applyZoom();
+            }
+            return;
+        }
+
         const [w, h] = ratioStr.split(":").map(Number);
+        if (!w || !h) return;
         this.aspectRatio = w / h;
         this.ratioLabel = ratioStr;
 
         if (this.displayWidth > 0) {
             this._applyZoom();
         }
+    }
+
+    _resolveOriginalAspectRatio() {
+        const w = Number(this.videoWidth) || 1;
+        const h = Number(this.videoHeight) || 1;
+        if (w <= 0 || h <= 0) return 1;
+        return w / h;
     }
 
     _setupEvents() {

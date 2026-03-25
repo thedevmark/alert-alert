@@ -2,7 +2,7 @@ import sys
 import os
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Add parent directory to path to import app
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,29 +13,13 @@ class TestDownloadPerformance(unittest.TestCase):
     def setUp(self):
         self.client = app.app.test_client()
 
-    @patch('app.run_subprocess')
-    def test_download_is_non_blocking(self, mock_run_subprocess):
-        # Mock run_subprocess to sleep for 2 seconds to simulate download
-        def side_effect(*args, **kwargs):
-            cmd = args[0]
-            if "yt-dlp" in str(cmd) or (len(cmd) > 0 and "yt-dlp" in str(cmd[0])):
-                time.sleep(2)
+    @patch('alert.threading.Thread.start', autospec=True)
+    def test_download_is_non_blocking(self, mock_thread_start):
+        # The route should return immediately after scheduling work on a background thread.
+        mock_thread_start.return_value = None
 
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = ""
-            mock_result.stderr = ""
-            return mock_result
-
-        mock_run_subprocess.side_effect = side_effect
-
-        with patch('pathlib.Path.glob') as mock_glob:
-            # We need to return a list of files so the thread doesn't error out immediately after "download"
-            # But here we just care about the initial response
-            mock_file = MagicMock()
-            mock_file.name = "clip.mp4"
-            mock_glob.return_value = [mock_file]
-
+        with patch('uuid.uuid4') as mock_uuid:
+            mock_uuid.return_value.hex = "12345678deadbeef"
             start_time = time.time()
             response = self.client.post('/api/download', json={
                 "url": "https://www.youtube.com/watch?v=12345",
@@ -53,6 +37,7 @@ class TestDownloadPerformance(unittest.TestCase):
             data = response.get_json()
             self.assertEqual(data['status'], 'downloading')
             self.assertIn('job_id', data)
+            mock_thread_start.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()
