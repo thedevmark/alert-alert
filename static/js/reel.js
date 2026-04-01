@@ -83,6 +83,8 @@ const ReelMaker = (() => {
     let facecamGuideDrag = null;
     let projectRole = "shortform";
     let derivedFromProjectId = "";
+    let pendingLongformProject = null;
+    let dependencySnapshot = null;
 
     // ── Helpers ────────────────────────────────────────────────────
 
@@ -99,10 +101,45 @@ const ReelMaker = (() => {
     function showError(stepId, msg) {
         const el = $(stepId);
         if (el) { el.textContent = msg; el.classList.remove("hidden"); }
+        setOperationRail(msg, {
+            source: mapStepIdToRailSource(stepId),
+            tone: "error",
+        });
     }
     function hideError(stepId) {
         const el = $(stepId);
         if (el) { el.textContent = ""; el.classList.add("hidden"); }
+    }
+
+    function mapStepIdToRailSource(stepId = "") {
+        const normalized = String(stepId || "").trim();
+        if (normalized === "reel-step1-error") return "Session";
+        if (normalized === "reel-step2-error") return "Edit";
+        if (normalized === "reel-step3-error") return "Captions";
+        if (normalized === "reel-step4-error") return "Deliver";
+        return "Video Editor";
+    }
+
+    function setOperationRail(message, options = {}) {
+        const { source = "Video Editor", tone = "info" } = options;
+        const rail = $("reel-operation-rail");
+        const pill = $("reel-operation-pill");
+        const text = $("reel-operation-text");
+        if (!rail || !pill || !text) return;
+        if (!message) {
+            hide(rail);
+            return;
+        }
+
+        rail.classList.remove("error", "success", "info");
+        rail.classList.add(tone);
+        pill.textContent = source;
+        text.textContent = message;
+        show(rail);
+    }
+
+    function clearOperationRail() {
+        hide("reel-operation-rail");
     }
 
     function setSourceMomentStatus(message) {
@@ -258,11 +295,14 @@ const ReelMaker = (() => {
         document.querySelectorAll("[data-format-preset]").forEach((button) => {
             button.classList.toggle("active", button.dataset.formatPreset === exportFormatPreset);
         });
-        const summary = $("reel-export-format-summary");
-        if (summary) {
-            summary.textContent = activePreset.summary;
-            summary.title = activePreset.label;
-        }
+        ["reel-export-format-summary", "reel-delivery-format-summary"].forEach((id) => {
+            const summary = $(id);
+            if (summary) {
+                summary.textContent = activePreset.summary;
+                summary.title = activePreset.label;
+            }
+        });
+        syncBurnCaptionsSummary();
         updateExportCompositionUI();
     }
 
@@ -399,6 +439,118 @@ const ReelMaker = (() => {
         el.classList.toggle("settings-hint", !error);
     }
 
+    function renderCaptionRuntimeCard(deps = dependencySnapshot) {
+        const heading = $("reel-caption-runtime-heading");
+        const summary = $("reel-caption-runtime-summary");
+        const installBtn = $("reel-caption-runtime-install-btn");
+        const speakerBtn = $("reel-caption-runtime-speaker-btn");
+        if (!heading || !summary || !installBtn || !speakerBtn) return;
+
+        dependencySnapshot = deps || dependencySnapshot;
+        const captioning = dependencySnapshot?.captioning || {};
+        const installState = dependencySnapshot?.captioning_install || {};
+        const requiredMissing = Array.isArray(captioning.required_missing) ? captioning.required_missing : [];
+        const optionalMissing = Array.isArray(captioning.optional_missing) ? captioning.optional_missing : [];
+        const requiredReady = Boolean(captioning.faster_whisper?.installed) && Boolean(captioning.torch?.installed);
+        const pyannoteMissing = optionalMissing.includes("pyannote_audio");
+        const busy = installState.status === "installing";
+
+        if (!dependencySnapshot) {
+            heading.textContent = "Checking caption runtime...";
+            summary.textContent = "Video Editor is checking whether the captioning packages are ready.";
+            installBtn.disabled = true;
+            speakerBtn.disabled = true;
+            hide(speakerBtn);
+            return;
+        }
+
+        if (busy) {
+            heading.textContent = "Installing caption runtime...";
+            summary.textContent = installState.message || "Installing faster-whisper and torch. Keep the app open.";
+        } else if (requiredReady) {
+            heading.textContent = "Caption runtime is ready";
+            summary.textContent = pyannoteMissing
+                ? "Transcription is ready. Install pyannote.audio if you want optional speaker labels."
+                : "Transcription is ready for this project.";
+        } else {
+            const missingLabel = requiredMissing.length > 0 ? requiredMissing.join(" + ") : "faster-whisper + torch";
+            heading.textContent = "Caption runtime needs setup";
+            summary.textContent = `Install ${missingLabel} here before you run the caption pass.`;
+        }
+
+        installBtn.disabled = busy;
+        installBtn.classList.toggle("hidden", requiredReady);
+        installBtn.textContent = busy ? "Installing caption runtime..." : "Install faster-whisper + torch (1-click)";
+
+        speakerBtn.disabled = busy;
+        speakerBtn.classList.toggle("hidden", !requiredReady || !pyannoteMissing);
+        if (!busy) {
+            speakerBtn.textContent = "Install pyannote.audio (optional)";
+        }
+    }
+
+    function renderLongformBuildUI() {
+        const summary = $("reel-longform-build-summary");
+        const handoff = $("reel-longform-handoff");
+        const handoffHeading = $("reel-longform-handoff-heading");
+        const handoffSummary = $("reel-longform-handoff-summary");
+        const openBtn = $("reel-open-longform-btn");
+        const buildBtn = $("reel-create-longform-btn");
+        const preparedShortCount = getPreparedClipRows().length;
+        const queuedPreparedShortCount = getQueuedPreparedClipRows().length;
+
+        if (summary) {
+            if (projectRole === "longform") {
+                const sourceProject = getSourceProjectSummary();
+                summary.textContent = sourceProject
+                    ? `This is the horizontal derivative for ${sourceProject.title || `project ${sourceProject.project_id}`}. Return to the shortform source project to rebuild the longform cut.`
+                    : "This project is already the horizontal derivative. Return to the shortform source project to rebuild the longform cut.";
+            } else if (queuedPreparedShortCount > 0) {
+                summary.textContent = `Build a separate horizontal project from ${queuedPreparedShortCount} queued prepared short${queuedPreparedShortCount === 1 ? "" : "s"}. This creates another project; it does not export a file yet.`;
+            } else if (preparedShortCount > 0) {
+                summary.textContent = "Queue at least one prepared short for longform, then build a separate horizontal project from that queue.";
+            } else {
+                summary.textContent = "Prep shorts in the Session Inbox first, then queue the best ones for a separate longform project.";
+            }
+        }
+
+        if (buildBtn) {
+            buildBtn.disabled = projectRole === "longform" || !projectId || queuedPreparedShortCount === 0;
+            buildBtn.title = projectRole === "longform"
+                ? "This project is already a longform derivative."
+                : (queuedPreparedShortCount > 0
+                    ? `Build a horizontal project from ${queuedPreparedShortCount} queued prepared short${queuedPreparedShortCount === 1 ? "" : "s"}.`
+                    : (preparedShortCount > 0
+                        ? "Queue at least one prepared short for longform first."
+                        : "Prepare at least one clip as a short first."));
+        }
+
+        if (!handoff || !handoffHeading || !handoffSummary || !openBtn) return;
+        if (pendingLongformProject && pendingLongformProject.sourceProjectId === projectId) {
+            handoffHeading.textContent = `Longform project ${pendingLongformProject.projectId} is ready`;
+            handoffSummary.textContent = pendingLongformProject.message
+                || "Open the derived project when you are ready to edit the horizontal cut.";
+            openBtn.disabled = false;
+            show(handoff);
+            return;
+        }
+
+        hide(handoff);
+    }
+
+    function dismissLongformHandoff() {
+        pendingLongformProject = null;
+        renderLongformBuildUI();
+    }
+
+    async function openPendingLongformProject() {
+        if (!pendingLongformProject?.projectId) return;
+        const targetProjectId = pendingLongformProject.projectId;
+        pendingLongformProject = null;
+        renderLongformBuildUI();
+        await resumeProject(targetProjectId);
+    }
+
     function getShortPresetConfig(preset = shortformPreset) {
         return SHORTFORM_PRESETS[preset] || SHORTFORM_PRESETS[DEFAULT_SHORTFORM_PRESET];
     }
@@ -481,15 +633,29 @@ const ReelMaker = (() => {
 
     function updateExportCompositionUI() {
         const composition = getEffectiveCompositionState();
-        const summaryEl = $("reel-export-composition-summary");
-        if (summaryEl) {
-            summaryEl.textContent = composition.summary;
-            summaryEl.title = composition.detail;
-        }
+        ["reel-export-composition-summary", "reel-delivery-composition-summary"].forEach((id) => {
+            const summaryEl = $(id);
+            if (summaryEl) {
+                summaryEl.textContent = composition.summary;
+                summaryEl.title = composition.detail;
+            }
+        });
         const hintEl = $("reel-export-composition-hint");
         if (hintEl) {
             hintEl.textContent = composition.detail;
         }
+        renderPreviewCompositionBadge();
+    }
+
+    function syncBurnCaptionsSummary() {
+        const burnCaptions = $("reel-burn-captions")?.checked !== false;
+        const label = burnCaptions ? "Captions will burn in" : "Clean video + subtitle files";
+        ["reel-export-burn-summary", "reel-delivery-burn-summary"].forEach((id) => {
+            const el = $(id);
+            if (el) {
+                el.textContent = label;
+            }
+        });
     }
 
     function getPreparedClipRows() {
@@ -537,7 +703,6 @@ const ReelMaker = (() => {
         const markerCount = Number(momentCounts.stream_marker || 0);
         const twitchClipCount = Number(momentCounts.twitch_clip || 0);
         const captionsReady = hasCaptionData();
-        const sourceRoleLabel = projectRole === "longform" ? "Longform derivative" : "Shortform master";
         const sourceExportDone = projectRole === "longform"
             ? Boolean(sourceSummary?.has_export)
             : exportedReelReady;
@@ -550,7 +715,7 @@ const ReelMaker = (() => {
         return [
             {
                 key: "auth",
-                title: "Shared Twitch auth",
+                title: "Connect Twitch",
                 state: authUser?.login ? "done" : "ready",
                 summary: authUser?.login
                     ? `Connected as @${authUser.login}.`
@@ -558,7 +723,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "source",
-                title: `${sourceRoleLabel} source VOD`,
+                title: "Load source VOD",
                 state: projectId && vodDuration > 0 && (vodUrl || localVodUploaded) ? "done" : "blocked",
                 summary: projectId && vodDuration > 0 && (vodUrl || localVodUploaded)
                     ? `${sourceType === "file" ? "Local source" : "Remote VOD"} loaded at ${formatTime(vodDuration)}.`
@@ -566,7 +731,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "session",
-                title: "Session metadata",
+                title: "Save session details",
                 state: session.channel_name || session.game_title || session.session_label ? "done" : "ready",
                 summary: session.channel_name || session.game_title || session.session_label
                     ? [session.channel_name && `@${session.channel_name}`, session.game_title, session.session_label].filter(Boolean).join(" · ")
@@ -574,7 +739,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "inbox",
-                title: "Session inbox moments",
+                title: "Fill session inbox",
                 state: sourceMoments.length > 0 ? "done" : "blocked",
                 summary: sourceMoments.length > 0
                     ? `${sourceMoments.length} surfaced moments. ${markerCount} markers, ${twitchClipCount} Twitch clips.`
@@ -582,7 +747,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "shorts",
-                title: "Prepared shorts",
+                title: "Prep shorts",
                 state: preparedCount > 0 ? "done" : (sourceMoments.length > 0 ? "ready" : "blocked"),
                 summary: preparedCount > 0
                     ? `${preparedCount} short-ready clip${preparedCount === 1 ? "" : "s"} using ${getShortPresetConfig().label}.`
@@ -590,7 +755,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "sequence",
-                title: "Shortform stitch",
+                title: "Build short sequence",
                 state: concatReady ? "done" : (getClipRows().length > 0 ? "ready" : "blocked"),
                 summary: concatReady
                     ? "Clips are downloaded and stitched into a preview sequence."
@@ -598,7 +763,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "captions",
-                title: "Caption pass",
+                title: "Run caption pass",
                 state: captionsReady ? "done" : (concatReady ? "ready" : "blocked"),
                 summary: captionsReady
                     ? "Transcription and caption styling are ready."
@@ -606,7 +771,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "short_export",
-                title: "Shortform export",
+                title: "Deliver current cut",
                 state: sourceExportDone ? "done" : (concatReady ? "ready" : "blocked"),
                 summary: sourceExportDone
                     ? `${projectRole === "longform" ? "Source shortform project already has a render." : `Rendered for ${currentFormat}.`}`
@@ -614,7 +779,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "longform_queue",
-                title: "Longform queue",
+                title: "Queue longform picks",
                 state: queuedPreparedCount > 0 ? "done" : (preparedCount > 0 ? "ready" : "blocked"),
                 summary: queuedPreparedCount > 0
                     ? `${queuedPreparedCount} prepared short${queuedPreparedCount === 1 ? "" : "s"} queued for the horizontal cut.`
@@ -622,7 +787,7 @@ const ReelMaker = (() => {
             },
             {
                 key: "longform_build",
-                title: "Longform build + export",
+                title: "Build or deliver longform",
                 state: longformExportDone ? "done" : (longformBuilt ? "ready" : (queuedPreparedCount > 0 ? "ready" : "blocked")),
                 summary: longformExportDone
                     ? "A horizontal longform project has been built and rendered."
@@ -643,7 +808,7 @@ const ReelMaker = (() => {
         list.innerHTML = "";
 
         const completedCount = items.filter((item) => item.state === "done").length;
-        progress.textContent = `${completedCount} / ${items.length} ready`;
+        progress.textContent = `${completedCount} / ${items.length} complete`;
 
         const nextBlocked = items.find((item) => item.state === "blocked");
         const nextReady = items.find((item) => item.state === "ready");
@@ -663,7 +828,7 @@ const ReelMaker = (() => {
                 <div class="reel-beta-flow-copy">
                     <div class="reel-beta-flow-title-row">
                         <span class="reel-beta-flow-title">${escapeHtml(item.title)}</span>
-                        <span class="reel-beta-flow-state ${item.state}">${escapeHtml(item.state === "done" ? "Done" : (item.state === "ready" ? "Ready" : "Blocked"))}</span>
+                        <span class="reel-beta-flow-state ${item.state}">${escapeHtml(item.state === "done" ? "Done" : (item.state === "ready" ? "In Progress" : "Blocked"))}</span>
                     </div>
                     <div class="reel-beta-flow-summary">${escapeHtml(item.summary)}</div>
                 </div>
@@ -754,7 +919,7 @@ const ReelMaker = (() => {
         const summary = $("reel-facecam-summary");
         if (!summary) return;
         if (!facecamLayout.enabled) {
-            summary.textContent = "Enable a saved facecam guide if your stream layout has a consistent camera box. Drag the guide in Source Monitor to place it.";
+            summary.textContent = "Enable a saved facecam guide if your stream layout has a consistent camera box. Drag the guide in Clip Preview to place it and reuse that framing in exports.";
             return;
         }
 
@@ -1998,9 +2163,20 @@ const ReelMaker = (() => {
 
         badge.textContent = `Project ${projectId}`;
         show(badge);
-        meta.textContent = summary
-            ? `${summary.title || "Untitled video project"} · ${buildProjectMeta(summary)}`
-            : `Autosaving locally as video project ${projectId}.`;
+        if (summary) {
+            const sourceProject = summary.project_role === "longform" && summary.derived_from_project_id
+                ? recentProjects.find((item) => item.project_id === summary.derived_from_project_id) || null
+                : null;
+            const linkedLongform = summary.project_role !== "longform"
+                ? recentProjects.find((item) => item.derived_from_project_id === summary.project_id) || null
+                : null;
+            const contextLabel = sourceProject
+                ? `Derived from ${sourceProject.title || `project ${sourceProject.project_id}`}`
+                : (linkedLongform ? `Longform project ${linkedLongform.project_id} linked` : "");
+            meta.textContent = `${summary.title || "Untitled video project"} · ${buildProjectMeta(summary)}${contextLabel ? ` · ${contextLabel}` : ""}`;
+        } else {
+            meta.textContent = `Autosaving locally as video project ${projectId}.`;
+        }
         updateWorkspaceChrome(summary);
     }
 
@@ -2022,7 +2198,7 @@ const ReelMaker = (() => {
         }
 
         if ($("reel-monitor-title")) {
-            $("reel-monitor-title").textContent = previewMode === "sequence" ? "Sequence Monitor" : "Source Monitor";
+            $("reel-monitor-title").textContent = previewMode === "sequence" ? "Project Preview" : "Clip Preview";
         }
 
         if (sourceChip) {
@@ -2045,9 +2221,9 @@ const ReelMaker = (() => {
                 const start = parseTimestamp(row.querySelector(".clip-start")?.value || "0");
                 const end = parseTimestamp(row.querySelector(".clip-end")?.value || "0");
                 const clipName = row.querySelector(".clip-title")?.value?.trim() || row.querySelector(".clip-number")?.textContent || "Clip";
-                $("reel-monitor-subtitle").textContent = `${clipName} · ${formatTimestamp(start)} to ${formatTimestamp(end)}. Drag clip edges in the Source Timeline or use I / O to trim.`;
+                $("reel-monitor-subtitle").textContent = `${clipName} · ${formatTimestamp(start)} to ${formatTimestamp(end)}. Drag clip edges in Clip Review or use I / O to trim.`;
             } else {
-                $("reel-monitor-subtitle").textContent = "Use the Source Timeline to mark clips, then preview the stitched program output in Sequence Monitor.";
+                $("reel-monitor-subtitle").textContent = "Use Clip Review to mark ranges, then switch to Project Preview to inspect the stitched output.";
             }
         }
 
@@ -2077,8 +2253,8 @@ const ReelMaker = (() => {
         }
         if ($("reel-status-preview")) {
             $("reel-status-preview").textContent = previewMode === "sequence"
-                ? "Sequence monitor"
-                : (sourceType === "file" ? "Source monitor · local" : "Source monitor · remote");
+                ? "Project preview"
+                : (sourceType === "file" ? "Clip preview · local" : "Clip preview · remote");
         }
         if ($("reel-status-format")) {
             const composition = getEffectiveCompositionState();
@@ -2297,9 +2473,9 @@ const ReelMaker = (() => {
     function updateToolbarState() {
         const isUrlSource = sourceType === "url";
         const preparedShortCount = getPreparedClipRows().length;
-        const queuedPreparedShortCount = getQueuedPreparedClipRows().length;
         updateExportCompositionUI();
         renderBetaFlowStatus();
+        renderLongformBuildUI();
         if ($("reel-url-input")) $("reel-url-input").disabled = !isUrlSource;
         if ($("reel-validate-btn")) $("reel-validate-btn").disabled = !isUrlSource;
         if ($("reel-import-moments-btn")) {
@@ -2309,14 +2485,6 @@ const ReelMaker = (() => {
         if ($("reel-download-clips-btn")) $("reel-download-clips-btn").disabled = !projectId || getClipRows().length === 0;
         if ($("reel-transcribe-btn")) $("reel-transcribe-btn").disabled = !concatReady;
         if ($("reel-export-btn")) $("reel-export-btn").disabled = !concatReady;
-        if ($("reel-create-longform-btn")) {
-            $("reel-create-longform-btn").disabled = !projectId || queuedPreparedShortCount === 0;
-            $("reel-create-longform-btn").title = queuedPreparedShortCount > 0
-                ? `Build a horizontal version from ${queuedPreparedShortCount} queued prepared short${queuedPreparedShortCount === 1 ? "" : "s"}.`
-                : (preparedShortCount > 0
-                    ? "Queue at least one prepared short for longform first."
-                    : "Prepare at least one clip as a short first.");
-        }
         if ($("reel-bulk-prepare-all-btn")) $("reel-bulk-prepare-all-btn").disabled = !projectId || sourceMoments.length === 0;
         if ($("reel-bulk-prepare-twitch-btn")) {
             $("reel-bulk-prepare-twitch-btn").disabled = !projectId || !sourceMoments.some((moment) => String(moment?.kind || "").toLowerCase() === "twitch_clip");
@@ -2545,6 +2713,7 @@ const ReelMaker = (() => {
         facecamGuideDrag = null;
         projectRole = "shortform";
         derivedFromProjectId = "";
+        pendingLongformProject = null;
         if (clipInspectorTimer) {
             clearTimeout(clipInspectorTimer);
             clipInspectorTimer = null;
@@ -2604,6 +2773,7 @@ const ReelMaker = (() => {
         renderClipInspector();
         renderAssetBin();
         renderProjectChrome();
+        renderLongformBuildUI();
         updateToolbarState();
     }
 
@@ -3310,6 +3480,9 @@ const ReelMaker = (() => {
         localVodUploaded = Boolean(project.local_file_uploaded);
         projectRole = project.project_role || "shortform";
         derivedFromProjectId = project.derived_from_project_id || "";
+        if (pendingLongformProject?.projectId && pendingLongformProject.projectId === restoredProjectId) {
+            pendingLongformProject = null;
+        }
         sourceMoments = project.source_moments || [];
         setShortformPreset(project.shortform_recipe?.preset || DEFAULT_SHORTFORM_PRESET, { render: false });
         connectedTwitchClips = sourceMoments.filter((moment) => String(moment?.kind || "").toLowerCase() === "twitch_clip");
@@ -3390,6 +3563,7 @@ const ReelMaker = (() => {
 
         renderProjectChrome(project);
         await loadProjectAssets();
+        renderLongformBuildUI();
         updateToolbarState();
     }
 
@@ -3572,9 +3746,13 @@ const ReelMaker = (() => {
             showError("reel-step4-error", "Open a project first.");
             return;
         }
+        if (projectRole === "longform") {
+            showError("reel-step4-error", "This project is already the longform derivative. Reopen the shortform source project to rebuild it.");
+            return;
+        }
 
         const btn = $("reel-create-longform-btn");
-        const previous = btn?.textContent || "Build Longform from Prepared Shorts";
+        const previous = btn?.textContent || "Build Longform Project";
         if (btn) {
             btn.disabled = true;
             btn.textContent = "Creating...";
@@ -3582,6 +3760,7 @@ const ReelMaker = (() => {
 
         try {
             await saveSessionDetails({ quiet: true });
+            const sourceProjectId = projectId;
             const data = await api("/api/reel/create-longform-version", {
                 method: "POST",
                 body: JSON.stringify({ project_id: projectId }),
@@ -3591,13 +3770,20 @@ const ReelMaker = (() => {
                 return;
             }
             await loadRecentProjects();
-            await resumeProject(data.project_id);
             const selectedCount = Number(data.selected_clip_count || 0);
             const sourceCount = Number(data.source_clip_count || 0);
+            pendingLongformProject = {
+                projectId: data.project_id,
+                sourceProjectId,
+                message: selectedCount > 0
+                    ? `Longform project ${data.project_id} was built from ${selectedCount} queued short${selectedCount === 1 ? "" : "s"} out of ${sourceCount || selectedCount} source clip${(sourceCount || selectedCount) === 1 ? "" : "s"}. Open it when you are ready to continue the horizontal edit.`
+                    : "Longform project is ready. Open it when you are ready to continue the horizontal edit.",
+            };
+            renderLongformBuildUI();
             setStreamerStatus(
                 selectedCount > 0
-                    ? `Built a landscape longform version from ${selectedCount} prepared short${selectedCount === 1 ? "" : "s"} out of ${sourceCount || selectedCount} source clip${(sourceCount || selectedCount) === 1 ? "" : "s"}.`
-                    : "Built a landscape longform version from the prepared shorts in this session.",
+                    ? `Built longform project ${data.project_id} from ${selectedCount} queued prepared short${selectedCount === 1 ? "" : "s"} out of ${sourceCount || selectedCount} source clip${(sourceCount || selectedCount) === 1 ? "" : "s"}.`
+                    : `Built longform project ${data.project_id} from the prepared shorts in this session.`,
             );
         } catch (e) {
             showError("reel-step4-error", e.message || "Failed to create longform version.");
@@ -4398,6 +4584,9 @@ const ReelMaker = (() => {
             }
             updateConnectedTwitchControls(detail);
         });
+        document.addEventListener("dm:deps-status", (event) => {
+            renderCaptionRuntimeCard(event?.detail || null);
+        });
         $("reel-video-input")?.addEventListener("change", onLocalVideoSelect);
         $("reel-url-input")?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") validateUrl();
@@ -4543,6 +4732,11 @@ const ReelMaker = (() => {
         setupFileDropZone();
         updateExportFormatUI();
         updateShortPresetSummary();
+        if (typeof App !== "undefined" && typeof App.getDependencySnapshot === "function") {
+            renderCaptionRuntimeCard(App.getDependencySnapshot());
+        } else {
+            renderCaptionRuntimeCard(null);
+        }
         resetEditorState({ forgetProject: false });
         await loadRecentProjects();
         await restoreLastProject();
@@ -4664,6 +4858,8 @@ const ReelMaker = (() => {
         setLongformQueueForPrepared,
         setFacecamPreset,
         createLongformVersion,
+        openPendingLongformProject,
+        dismissLongformHandoff,
         applyAuthProfile,
         detectMoments,
         attachCaptionTrack,

@@ -1,5 +1,6 @@
 const DmAuth = (() => {
     const SHARED_AUTH_URL = "https://auth.deutschmark.online";
+    const LOCAL_SHARED_AUTH_PROXY_URL = "/api/shared-auth";
     const LOCAL_AUTH_TOKEN_STORAGE_KEY = "dmSharedAuthToken";
     const SUPPORTED_REMOTE_RETURN_ORIGINS = new Set([
         "https://toolkit.deutschmark.online",
@@ -75,6 +76,14 @@ const DmAuth = (() => {
         return SUPPORTED_REMOTE_RETURN_ORIGINS.has(origin) || isLocalhostOrigin(origin);
     }
 
+    function shouldUseLocalProxy() {
+        return isLocalhostOrigin(getCurrentOrigin());
+    }
+
+    function getRequestBaseUrl() {
+        return shouldUseLocalProxy() ? LOCAL_SHARED_AUTH_PROXY_URL : SHARED_AUTH_URL;
+    }
+
     function buildReturnTo() {
         return window.location.href;
     }
@@ -137,7 +146,7 @@ const DmAuth = (() => {
 
         let response;
         try {
-            response = await fetch(`${SHARED_AUTH_URL}${path}`, {
+            response = await fetch(`${getRequestBaseUrl()}${path}`, {
                 ...init,
                 credentials: "include",
                 headers,
@@ -183,7 +192,9 @@ const DmAuth = (() => {
     function describeError(error) {
         if (error instanceof SharedAuthError) {
             if (error.status === 0) {
-                return "auth.deutschmark.online is unreachable from this app session.";
+                return shouldUseLocalProxy()
+                    ? "This app could not reach auth.deutschmark.online through the local auth bridge."
+                    : "auth.deutschmark.online is unreachable from this app session.";
             }
             if (error.status === 401) {
                 return null;
@@ -415,7 +426,14 @@ const DmAuth = (() => {
     }
 
     async function init() {
-        consumeAuthTokenFromUrl();
+        const token = consumeAuthTokenFromUrl();
+        if (token) {
+            setState({
+                error: null,
+                isLoading: true,
+                user: null,
+            });
+        }
         render();
         await refreshSession();
         window.addEventListener("focus", () => {

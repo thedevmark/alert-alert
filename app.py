@@ -13,6 +13,8 @@ import zipfile
 import importlib
 from functools import lru_cache
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
@@ -51,6 +53,10 @@ SETTINGS_FILE = APP_STATE_DIR / "settings.json"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "output"
 CAPTION_ENV_DIR = APP_STATE_DIR / "captioning-env"
 CAPTION_ENV_DLL_HANDLES = []
+SHARED_AUTH_BASE_URL = str(
+    os.environ.get("ALERT_ALERT_SHARED_AUTH_URL", "https://auth.deutschmark.online")
+    or "https://auth.deutschmark.online"
+).strip().rstrip("/")
 
 # Ensure directories exist
 for d in [DOWNLOADS_DIR, PROCESSING_DIR, RUNTIME_BIN_DIR]:
@@ -114,6 +120,66 @@ def reset_output_dir():
     OUTPUT_DIR = DEFAULT_OUTPUT_DIR.resolve()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     return OUTPUT_DIR
+
+
+def _shared_auth_origin():
+    try:
+        return request.host_url.rstrip("/")
+    except Exception:
+        return f"http://{request.host}"
+
+
+def _decode_shared_auth_body(raw_bytes):
+    if not raw_bytes:
+        return {}
+
+    text = raw_bytes.decode("utf-8", errors="replace").strip()
+    if not text:
+        return {}
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"error": text}
+
+
+def _proxy_shared_auth_request(path, method="GET"):
+    query = request.args.to_dict(flat=True)
+    upstream = f"{SHARED_AUTH_BASE_URL}{path}"
+    if query:
+        upstream = f"{upstream}?{urlencode(query)}"
+
+    headers = {
+        "Accept": "application/json",
+    }
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header:
+        headers["Authorization"] = auth_header
+
+    body = None
+    if method not in {"GET", "HEAD"}:
+        body = request.get_data(cache=False) or None
+        headers["Origin"] = _shared_auth_origin()
+        content_type = request.headers.get("Content-Type", "").strip()
+        if content_type:
+            headers["Content-Type"] = content_type
+
+    upstream_request = Request(upstream, data=body, headers=headers, method=method)
+
+    try:
+        with urlopen(upstream_request, timeout=20) as response:
+            payload = _decode_shared_auth_body(response.read())
+            return jsonify(payload), response.status
+    except HTTPError as exc:
+        payload = _decode_shared_auth_body(exc.read())
+        if not isinstance(payload, dict):
+            payload = {"error": str(payload)}
+        return jsonify(payload), exc.code
+    except URLError as exc:
+        return jsonify({
+            "error": "auth.deutschmark.online is unreachable from this app session.",
+            "details": str(getattr(exc, "reason", exc) or exc),
+        }), 502
 
 # In-memory job status tracking
 jobs = {}
@@ -915,6 +981,31 @@ def choose_storage_config():
         "default_output_dir": str(DEFAULT_OUTPUT_DIR.resolve()),
         "custom_output_dir": str(APP_SETTINGS.get("output_dir", "")).strip() or None,
     })
+
+
+@app.route("/api/shared-auth/session")
+def shared_auth_session():
+    return _proxy_shared_auth_request("/session")
+
+
+@app.route("/api/shared-auth/logout", methods=["POST"])
+def shared_auth_logout():
+    return _proxy_shared_auth_request("/logout", method="POST")
+
+
+@app.route("/api/shared-auth/twitch/videos")
+def shared_auth_twitch_videos():
+    return _proxy_shared_auth_request("/twitch/videos")
+
+
+@app.route("/api/shared-auth/twitch/markers")
+def shared_auth_twitch_markers():
+    return _proxy_shared_auth_request("/twitch/markers")
+
+
+@app.route("/api/shared-auth/twitch/clips")
+def shared_auth_twitch_clips():
+    return _proxy_shared_auth_request("/twitch/clips")
 
 
 def run_deps_check(force=False):

@@ -466,7 +466,7 @@
             <span class="reel-menu-item">Edit</span>
             <span class="reel-menu-item">Clip</span>
             <span class="reel-menu-item">View</span>
-            <span class="reel-menu-item">Export</span>
+            <span class="reel-menu-item">Deliver</span>
             <span class="reel-menu-divider"></span>
             <span id="reel-window-project-label" class="reel-menu-project">Video Editor Workspace</span>
         </div>
@@ -491,12 +491,12 @@
 
             <div class="toolbar-group">
                 <span class="toolbar-label">Preview</span>
-                <button id="reel-preview-source-btn" class="toolbar-btn" onclick="ReelMaker.previewSource()">Source</button>
-                <button id="reel-preview-sequence-btn" class="toolbar-btn" onclick="ReelMaker.previewSequence()">Sequence</button>
+                <button id="reel-preview-source-btn" class="toolbar-btn" onclick="ReelMaker.previewSource()">Clip</button>
+                <button id="reel-preview-sequence-btn" class="toolbar-btn" onclick="ReelMaker.previewSequence()">Project</button>
             </div>
 
             <div class="toolbar-group">
-                <span class="toolbar-label">Timeline</span>
+                <span class="toolbar-label">Edit</span>
                 <button id="reel-add-clip-btn" class="toolbar-btn" onclick="ReelMaker.addClip()">Add Clip</button>
                 <button id="reel-import-moments-btn" class="toolbar-btn" onclick="ReelMaker.importSourceMoments()">Import Moments</button>
                 <button id="reel-download-clips-btn" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch</button>
@@ -530,29 +530,22 @@
             </div>
 
             <div class="toolbar-group toolbar-group-formats">
-                <span class="toolbar-label">Format</span>
-                <div class="format-preset-strip" id="reel-format-presets">
-                    <button type="button" class="toolbar-btn format-preset-btn active" data-format-preset="shorts"
-                        onclick="ReelMaker.setExportFormatPreset('shorts')">Shorts / Reels</button>
-                    <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="portrait_feed"
-                        onclick="ReelMaker.setExportFormatPreset('portrait_feed')">4:5 Feed</button>
-                    <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="square"
-                        onclick="ReelMaker.setExportFormatPreset('square')">Square</button>
-                    <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="landscape"
-                        onclick="ReelMaker.setExportFormatPreset('landscape')">16:9 Landscape</button>
-                </div>
+                <span class="toolbar-label">Delivery Summary</span>
                 <span id="reel-export-format-summary" class="toolbar-label reel-export-format-summary">1080x1920 MP4</span>
                 <span id="reel-export-composition-summary" class="toolbar-label reel-export-composition-summary">Gameplay Focus vertical framing</span>
+                <span id="reel-export-burn-summary" class="toolbar-label reel-export-composition-summary">Captions will burn in</span>
             </div>
 
             <div class="toolbar-group">
-                <span class="toolbar-label">Export</span>
-                <label class="toolbar-checkbox-label" title="Bake captions into the exported video. Uncheck for a clean video + separate subtitle files.">
-                    <input type="checkbox" id="reel-burn-captions" checked> Burn Captions
-                </label>
-                <button id="reel-export-btn" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.exportReel()" disabled>Render Video</button>
-                <button id="reel-export-download-btn" class="toolbar-btn hidden" onclick="ReelMaker.downloadReel()">Download</button>
+                <span class="toolbar-label">Deliver</span>
+                <button type="button" class="toolbar-btn" onclick="ReelMaker.focusStep(3)">Captions</button>
+                <button type="button" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.focusStep(4)">Open Deliver Panel</button>
             </div>
+        </div>
+
+        <div id="reel-operation-rail" class="reel-operation-rail hidden">
+            <span id="reel-operation-pill" class="reel-operation-pill">Info</span>
+            <span id="reel-operation-text" class="reel-operation-text">Workflow updates will appear here.</span>
         </div>
 
         <div class="main-layout reel-workspace">
@@ -597,13 +590,13 @@
                     <div class="reel-monitor-header">
                         <div>
                             <p class="reel-dock-kicker">Monitor</p>
-                            <h3 id="reel-monitor-title">Source Monitor</h3>
+                            <h3 id="reel-monitor-title">Clip Preview</h3>
                         </div>
                         <div class="reel-monitor-switch">
                             <button type="button" id="reel-monitor-source-chip" class="toolbar-btn reel-monitor-chip active"
-                                onclick="ReelMaker.previewSource()">Source Monitor</button>
+                                onclick="ReelMaker.previewSource()">Clip Preview</button>
                             <button type="button" id="reel-monitor-sequence-chip" class="toolbar-btn reel-monitor-chip"
-                                onclick="ReelMaker.previewSequence()">Sequence Monitor</button>
+                                onclick="ReelMaker.previewSequence()">Project Preview</button>
                         </div>
                     </div>
                     <p id="reel-monitor-subtitle" class="settings-hint">Load a source video to start building the timeline.</p>
@@ -612,6 +605,10 @@
                         <div class="video-preview-sticky reel-monitor-preview">
                             <div id="reel-preview-container">
                                 <video id="reel-preview-video" muted playsinline controls preload="metadata"></video>
+                                <div id="reel-preview-composition-badge" class="reel-preview-composition-badge hidden">
+                                    <div id="reel-preview-composition-title" class="reel-preview-composition-title">Gameplay Focus</div>
+                                    <div id="reel-preview-composition-detail" class="reel-preview-composition-detail">Output framing preview</div>
+                                </div>
                                 <div id="reel-facecam-guide" class="reel-facecam-guide hidden">
                                     <span class="reel-facecam-guide-label">Facecam</span>
                                     <button type="button" id="reel-facecam-guide-handle" class="reel-facecam-guide-handle" aria-label="Resize facecam guide"></button>
@@ -630,15 +627,15 @@
 
                             <div class="reel-timeline-card hidden" id="reel-timeline-card">
                                 <div class="reel-timeline-header">
-                                    <span>Source Timeline</span>
+                                    <span>Clip Review</span>
                                     <span id="reel-preview-time" class="reel-timeline-time">0:00 / 0:00</span>
                                 </div>
                                 <div class="reel-multitrack-shell">
                                     <div class="reel-track-sidebar">
                                         <div class="reel-track-label reel-track-label-ruler">Time</div>
-                                        <div class="reel-track-label">V1 Source</div>
-                                        <div class="reel-track-label">A1 Cue</div>
-                                        <div class="reel-track-label">Markers</div>
+                                        <div class="reel-track-label">Clip Windows</div>
+                                        <div class="reel-track-label">Audio Shape</div>
+                                        <div class="reel-track-label">Caption Guide</div>
                                     </div>
                                     <div class="reel-track-scroll" id="reel-timeline-scroll">
                                         <div class="reel-track-stack" id="reel-source-track-stack">
@@ -657,15 +654,15 @@
 
                             <div class="reel-timeline-card hidden" id="reel-sequence-card">
                                 <div class="reel-timeline-header">
-                                    <span>Sequence Preview</span>
+                                    <span>Project Sequence</span>
                                     <span id="reel-sequence-time" class="reel-timeline-time">0:00 / 0:00</span>
                                 </div>
                                 <div class="reel-multitrack-shell">
                                     <div class="reel-track-sidebar">
                                         <div class="reel-track-label reel-track-label-ruler">Time</div>
-                                        <div class="reel-track-label">V1 Program</div>
-                                        <div class="reel-track-label">A1 Mix</div>
-                                        <div class="reel-track-label">CC Track</div>
+                                        <div class="reel-track-label">Sequence Clips</div>
+                                        <div class="reel-track-label">Sequence Audio</div>
+                                        <div class="reel-track-label">Caption Coverage</div>
                                     </div>
                                     <div class="reel-track-scroll" id="reel-sequence-scroll">
                                         <div class="reel-track-stack" id="reel-sequence-track-stack">
@@ -686,7 +683,7 @@
                 </section>
 
                 <section class="step disabled reel-step-center" id="reel-step-2">
-                    <h2><span class="step-num">2</span> Timeline</h2>
+                    <h2><span class="step-num">2</span> Edit &amp; Review</h2>
                     <div class="step-content">
                         <div class="reel-edit-header">
                             <div>
@@ -719,9 +716,9 @@
             </section>
 
             <div class="workflow-steps reel-right-dock">
-                <!-- Step R1: Video Source -->
+                <!-- Step R1: Session & Source -->
                 <section class="step" id="reel-step-1">
-                    <h2><span class="step-num">1</span> Video Source</h2>
+                    <h2><span class="step-num">1</span> Session &amp; Source</h2>
                     <div class="step-content">
                         <div id="reel-url-section" class="hidden">
                             <p class="settings-hint">Use the toolbar above to load a remote video URL.</p>
@@ -742,6 +739,7 @@
                             <p class="info-label">Title: <span id="reel-vod-title"></span></p>
                             <p class="info-label">Duration: <span id="reel-vod-duration"></span></p>
                         </div>
+                        <p class="settings-hint">Primary beta path: connect Twitch, load a VOD, import clips or markers into the Session Inbox, then prep shorts before you start polishing the cut.</p>
                         <div class="reel-streamer-panel">
                             <div class="reel-dock-header">
                                 <div>
@@ -787,10 +785,10 @@
                             <div class="reel-beta-flow-panel">
                                 <div class="reel-beta-flow-header">
                                     <div>
-                                        <p class="reel-dock-kicker">Beta Status</p>
-                                        <h4>End-to-end streamer workflow</h4>
+                                        <p class="reel-dock-kicker">Workflow Checklist</p>
+                                        <h4>End-to-end streamer beta path</h4>
                                     </div>
-                                    <span id="reel-beta-flow-progress" class="reel-beta-flow-progress">0 / 10 ready</span>
+                                    <span id="reel-beta-flow-progress" class="reel-beta-flow-progress">0 / 10 complete</span>
                                 </div>
                                 <p id="reel-beta-flow-next" class="settings-hint">Connect Twitch or load a source VOD to start the beta flow.</p>
                                 <div id="reel-beta-flow-list" class="reel-beta-flow-list">
@@ -838,7 +836,7 @@
                                         <input type="checkbox" id="reel-facecam-enabled"> Use facecam guide
                                     </label>
                                 </div>
-                                <p id="reel-facecam-summary" class="settings-hint">Enable a saved facecam guide if your stream layout has a consistent camera box. Drag the guide in Source Monitor to place it.</p>
+                                <p id="reel-facecam-summary" class="settings-hint">Enable a saved facecam guide if your stream layout has a consistent camera box. Drag the guide in Clip Preview to place it and reuse that framing in exports.</p>
                                 <div class="reel-facecam-actions">
                                     <button type="button" class="secondary-btn" onclick="ReelMaker.setFacecamPreset('top_left')">Top Left</button>
                                     <button type="button" class="secondary-btn" onclick="ReelMaker.setFacecamPreset('top_right')">Top Right</button>
@@ -981,10 +979,24 @@
                     </div>
                 </aside>
 
-                <!-- Step R3: Captions -->
+                <!-- Step R3: Caption Pass -->
                 <section class="step disabled" id="reel-step-3">
-                    <h2><span class="step-num">3</span> Captions</h2>
+                    <h2><span class="step-num">3</span> Caption Pass</h2>
                     <div class="step-content">
+                        <div id="reel-caption-runtime-card" class="reel-helper-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Caption Runtime</p>
+                                    <h4 id="reel-caption-runtime-heading">Captioning packages not checked yet</h4>
+                                </div>
+                            </div>
+                            <p id="reel-caption-runtime-summary" class="settings-hint">Install the caption runtime here if Video Editor reports missing packages.</p>
+                            <div class="reel-streamer-actions">
+                                <button type="button" class="secondary-btn" id="reel-caption-runtime-install-btn" onclick="App.installCaptioningDeps(false)">Install faster-whisper + torch (1-click)</button>
+                                <button type="button" class="secondary-btn hidden" id="reel-caption-runtime-speaker-btn" onclick="App.installCaptioningDeps(true)">Install pyannote.audio (optional)</button>
+                                <button type="button" class="secondary-btn" onclick="App.openSettingsPanel('dependency-settings-panel', 'reel-step-3')">Open Dependency Setup</button>
+                            </div>
+                        </div>
                         <div id="reel-transcribe-controls">
                             <div id="reel-hf-token-section">
                                 <p class="settings-hint">Speaker identification requires a free
@@ -1104,15 +1116,67 @@
                     </div>
                 </section>
 
-                <!-- Step R4: Export -->
+                <!-- Step R4: Build & Deliver -->
                 <section class="step disabled" id="reel-step-4">
-                    <h2><span class="step-num">4</span> Export</h2>
+                    <h2><span class="step-num">4</span> Build &amp; Deliver</h2>
                     <div class="step-content">
-                        <p class="settings-hint">Exports an MP4 using the selected format preset above. Pick Shorts/Reels, 4:5 feed, square, or 16:9 landscape. Use <strong>Burn Captions</strong> in the toolbar to control whether captions are baked in, or export clean and use the <strong>↓ SRT</strong> / <strong>↓ ASS</strong> files separately. The horizontal build uses clips you already prepped as shorts.</p>
-                        <p id="reel-export-composition-hint" class="settings-hint">Gameplay Focus drives the export framing and burned caption placement for this render.</p>
-                        <div class="reel-streamer-actions" style="margin-bottom:12px;">
-                            <button type="button" class="secondary-btn" id="reel-create-longform-btn" onclick="ReelMaker.createLongformVersion()">Build Longform from Prepared Shorts</button>
+                        <div class="reel-helper-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Longform Build</p>
+                                    <h4>Derive a horizontal project</h4>
+                                </div>
+                            </div>
+                            <p id="reel-longform-build-summary" class="settings-hint">Build a separate longform project from queued prepared shorts. This creates another project; it does not export a file yet.</p>
+                            <div class="reel-streamer-actions" style="margin-bottom:0;">
+                                <button type="button" class="secondary-btn" id="reel-create-longform-btn" onclick="ReelMaker.createLongformVersion()">Build Longform Project</button>
+                            </div>
                         </div>
+                        <div id="reel-longform-handoff" class="reel-helper-card hidden">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Longform Handoff</p>
+                                    <h4 id="reel-longform-handoff-heading">Longform project ready</h4>
+                                </div>
+                            </div>
+                            <p id="reel-longform-handoff-summary" class="settings-hint">Open the derived project when you are ready to edit the horizontal cut.</p>
+                            <div class="reel-streamer-actions" style="margin-bottom:0;">
+                                <button type="button" class="secondary-btn" id="reel-open-longform-btn" onclick="ReelMaker.openPendingLongformProject()">Open Longform Project</button>
+                                <button type="button" class="secondary-btn" onclick="ReelMaker.dismissLongformHandoff()">Keep Editing Current Project</button>
+                            </div>
+                        </div>
+                        <p class="settings-hint">Render the current project as an MP4 using the selected format preset above. Pick Shorts/Reels, 4:5 feed, square, or 16:9 landscape. Use <strong>Burn Captions</strong> in the toolbar to control whether captions are baked in, or export clean and use the <strong>↓ SRT</strong> / <strong>↓ ASS</strong> files separately.</p>
+                        <div class="reel-helper-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Delivery Controls</p>
+                                    <h4>Render the current project</h4>
+                                </div>
+                            </div>
+                            <div class="format-preset-strip" id="reel-format-presets">
+                                <button type="button" class="toolbar-btn format-preset-btn active" data-format-preset="shorts"
+                                    onclick="ReelMaker.setExportFormatPreset('shorts')">Shorts / Reels</button>
+                                <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="portrait_feed"
+                                    onclick="ReelMaker.setExportFormatPreset('portrait_feed')">4:5 Feed</button>
+                                <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="square"
+                                    onclick="ReelMaker.setExportFormatPreset('square')">Square</button>
+                                <button type="button" class="toolbar-btn format-preset-btn" data-format-preset="landscape"
+                                    onclick="ReelMaker.setExportFormatPreset('landscape')">16:9 Landscape</button>
+                            </div>
+                            <div class="reel-delivery-summary">
+                                <span id="reel-delivery-format-summary" class="toolbar-label reel-export-format-summary">1080x1920 MP4</span>
+                                <span id="reel-delivery-composition-summary" class="toolbar-label reel-export-composition-summary">Gameplay Focus vertical framing</span>
+                                <span id="reel-delivery-burn-summary" class="toolbar-label reel-export-composition-summary">Captions will burn in</span>
+                            </div>
+                            <div class="reel-streamer-actions">
+                                <label class="toolbar-checkbox-label" title="Bake captions into the exported video. Uncheck for a clean video + separate subtitle files.">
+                                    <input type="checkbox" id="reel-burn-captions" checked> Burn Captions
+                                </label>
+                                <button id="reel-export-btn" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.exportReel()" disabled>Render Video</button>
+                                <button id="reel-export-download-btn" class="toolbar-btn hidden" onclick="ReelMaker.downloadReel()">Download</button>
+                            </div>
+                        </div>
+                        <p id="reel-export-composition-hint" class="settings-hint">Gameplay Focus drives the export framing and burned caption placement for this render.</p>
                         <div id="reel-export-progress" class="hidden">
                             <div class="progress-bar-bg">
                                 <div id="reel-export-bar" class="progress-bar-fill" style="width:0%"></div>
@@ -1129,7 +1193,7 @@
         <div class="reel-statusbar">
             <span id="reel-status-project">No project loaded</span>
             <span id="reel-status-selection">No clip selected</span>
-            <span id="reel-status-preview">Source monitor</span>
+            <span id="reel-status-preview">Clip preview</span>
             <span id="reel-status-format">1080x1920 MP4</span>
             <span id="reel-status-runtime">0 clips</span>
         </div>

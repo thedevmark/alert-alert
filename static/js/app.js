@@ -624,6 +624,9 @@ const App = (() => {
 
     function renderDependencyStatus(deps) {
         lastDeps = deps;
+        document.dispatchEvent(new CustomEvent("dm:deps-status", {
+            detail: deps,
+        }));
         const missing = [];
         const instructions = [];
         const captioning = deps.captioning || {};
@@ -2744,5 +2747,8 @@ const App = (() => {
         useManualDependencySetup,
         toggleSettingsPanel,
         openSettingsPanel,
+        getDependencySnapshot() {
+            return lastDeps;
+        },
     };
 })();
