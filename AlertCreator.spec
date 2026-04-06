@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 
 datas = [('static', 'static')]
 binaries = []
 hiddenimports = [
+    'plistlib',
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
@@ -12,6 +13,13 @@ hiddenimports = [
 ]
 tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+try:
+    binaries += collect_dynamic_libs('rawpy')
+    hiddenimports += ['rawpy']
+except Exception:
+    # Keep the build usable in environments where rawpy is intentionally absent.
+    pass
 
 
 a = Analysis(

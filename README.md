@@ -66,7 +66,7 @@ The current intended beta loop is:
 9. Queue prepared shorts for longform.
 10. Build and export the longform derivative.
 
-The Video Editor now includes a `Beta Status` panel that tracks this flow per project and shows the next blocker directly in the UI.
+The Video Editor now includes a `Workflow Checklist` panel that tracks this flow per project and shows the next blocker directly in the UI.
 
 ---
 
@@ -185,17 +185,20 @@ The local app runs on `http://localhost:3000` by default unless overridden by en
 ### Video Editor
 1. Open `Video Editor`.
 2. Log in with Twitch.
-3. Refresh VODs and load one.
-4. Import Twitch markers or Twitch clips.
-5. Optionally paste manual timestamps too.
-6. Set the facecam guide if the stream layout has a consistent camera box.
-7. Prep moments into shorts.
-8. Download and stitch clips.
-9. Run captions.
-10. Export shortform.
-11. Queue prepared shorts for longform.
-12. Build the longform version.
-13. Export the longform project.
+3. Confirm the app shows the connected account in the shared auth header and the Video Editor session panel.
+4. Refresh VODs and load one.
+5. Import Twitch markers or Twitch clips.
+6. Optionally paste manual timestamps too.
+7. Set the facecam guide if the stream layout has a consistent camera box.
+8. Prep moments into shorts.
+9. Download and stitch clips.
+10. Run the caption pass.
+11. Open `Build & Deliver`.
+12. Render the shortform project.
+13. Queue prepared shorts for longform.
+14. Build the longform project.
+15. Use the longform handoff card to open the derived project.
+16. Render the longform project.
 
 If you just want the fastest real test, use:
 
@@ -205,7 +208,18 @@ If you just want the fastest real test, use:
 4. `Download Clips`
 5. `Transcribe`
 6. `Render Video`
-7. `Build Longform from Prepared Shorts`
+7. `Build Longform Project`
+8. `Open Longform Project`
+9. `Render Video`
+
+Expected UI checkpoints during beta:
+
+1. The `Workflow Checklist` should move forward without hidden blockers.
+2. The operation rail should report the last important success or failure.
+3. `Clip Preview` should show source-side framing controls.
+4. `Project Preview` should show output-aware composition context before render.
+5. `Caption Pass` should expose caption runtime install state directly in that step.
+6. `Build Longform Project` should not silently switch you into another project.
 
 ---
 
@@ -216,7 +230,7 @@ The beta path for facecam handling is user-defined layout memory, not detection.
 You can now:
 
 - enable a facecam guide
-- drag and resize it in `Source Monitor`
+- drag and resize it in `Clip Preview`
 - apply quick corner presets
 - save it with the project
 - remember it per channel locally
@@ -258,6 +272,7 @@ python -m PyInstaller --clean --noconfirm AlertCreator.spec
 ### Shared Twitch auth does not work
 - Run the app on `http://localhost:<port>` or an approved `deutschmark.online` origin.
 - Retry the login flow inside the desktop app.
+- On localhost, the app now uses a same-origin shared-auth bridge, so the callback should return to the app and populate the connected session instead of leaving the UI disconnected.
 - Confirm `auth.deutschmark.online` is reachable from your machine.
 
 ### Twitch clips do not import
