@@ -4,6 +4,15 @@
  */
 const App = (() => {
     const AUTO_DOWNLOAD_CONSENT_KEY = "alertCreatorAutoDownloadConsent";
+    const ONBOARDING_INTRO_DONE_KEY = "onboarding_intro_done";
+    const DEFAULT_THEME_ID = "cobalt-night";
+    const AVAILABLE_THEME_IDS = new Set([
+        "cobalt-night",
+        "graphite-terminal",
+        "nord-stack",
+        "forest-syntax",
+        "signal-teal",
+    ]);
 
     // State
     const DEFAULT_PREVIEW_VOLUME = 50;
@@ -21,80 +30,111 @@ const App = (() => {
     let lastDeps = null;
     let onboardingFlow = null;
     let onboardingStep = 0;
+    const SHARED_ONBOARDING_START_STEP = {
+        title: "Start With The Right Tool",
+        body: "Alert Creator is the fast utility for downloading one source, replacing audio, normalizing levels, and exporting a finished clip. Video Editor is the Twitch VOD workflow for pulling streams, markers, clips, shorts, captions, and longform follow-ups. Pick the workspace you want to start in.",
+        isChooserStep: true,
+    };
 
     const ONBOARDING_FLOWS = {
         alert: [
+            SHARED_ONBOARDING_START_STEP,
             {
-                icon: "🎬",
-                title: "Welcome to Alert! Alert!",
-                body: "Create punchy video clips from any URL in seconds — ready for your stream overlay or content feed.",
-                features: ["YouTube, Twitch, TikTok & more", "Trim, crop, and add sound effects", "Export ready for OBS or your stream deck"],
+                title: "Alert Creator Is The Fast Utility Tool",
+                body: "Use it when you want one source in, one finished file out, without opening the full Twitch editing workflow.",
+                features: [
+                    "Download a source from a URL or load one local video file",
+                    "Replace the original audio with a second URL or local audio file",
+                    "Normalize loudness, add fades, and trim the replacement audio",
+                    "Swap in a different image or video and export a finished alert clip",
+                ],
             },
             {
-                icon: "🔧",
                 title: "Install required tools",
-                body: "The app needs FFmpeg and yt-dlp to download and process video. Hit Install and it handles everything automatically.",
+                body: "Install the core download and processing tools once. After that, Alert Creator can download and process clips locally.",
                 isRuntimeStep: true,
             },
             {
-                icon: "🔗",
-                title: "Paste any video URL",
-                body: "Drop a link into the URL bar and click Load Video. Or switch to Local File and drag in a clip.",
-                features: ["Supports most major platforms", "No full download — fetches only what you need", "Preview loads instantly in the sidebar"],
+                title: "Load The Clip You Want To Work From",
+                body: "Paste a video URL or choose a local file. This is the fastest path when you just need one clip, one download, or one alert asset.",
+                features: [
+                    "Works with YouTube, Twitch, TikTok, and other supported URLs",
+                    "Local files work too when you already have the source on disk",
+                    "The source opens directly in preview so you can trim immediately",
+                ],
             },
             {
-                icon: "✂️",
-                title: "Trim to your moment",
-                body: "Drag the timeline handles to set your start and end points. Scrub to preview frame by frame.",
-                features: ["Frame-accurate in/out points", "Real-time preview as you scrub", "Optional freeze-frame at the end"],
+                title: "Shape The Clip And Audio",
+                body: "Set the crop, trim range, and audio options in one pass.",
+                features: [
+                    "Crop for square, widescreen, vertical, or custom framing",
+                    "Add an end-buffer freeze frame for alert timing",
+                    "Replace audio, trim the audio range, and keep it in sync",
+                    "Normalize levels so the export lands at a more consistent volume",
+                ],
             },
             {
-                icon: "🚀",
-                title: "Export and you're done",
-                body: "Click Process to render your clip. It lands in your output folder, ready to drop into OBS.",
-                features: ["MP4 output ready for streaming overlays", "Output folder set in Dependency Setup", "Change format and quality in settings"],
+                title: "Process And Export",
+                body: "Render the finished MP4 and drop it into OBS, your stream deck, Discord, or whatever tool needs the final file.",
+                features: [
+                    "Stream Alert, Shorts, Discord, and higher-quality export presets",
+                    "Saves to your configured output folder",
+                    "Built for fast turnarounds, not a multi-clip timeline",
+                ],
                 isLast: true,
-                doneLabel: "Start Creating",
+                doneLabel: "Open Alert Creator",
             },
         ],
         reel: [
+            SHARED_ONBOARDING_START_STEP,
             {
-                icon: "🎥",
-                title: "Welcome to Video Editor",
-                body: "Cut videos into polished exports with timeline clips, captions, and presets for the most common social formats.",
-                features: ["Pull clips from any video URL", "Auto-generated burned-in captions", "Export for Shorts, square posts, feeds, and landscape video"],
+                title: "Video Editor Is The Twitch VOD Workflow",
+                body: "Use it when a stream session needs to turn into many deliverables: imported clips, polished shorts, captions, and a longform follow-up.",
+                features: [
+                    "Connect Twitch and pull recent VODs, markers, and viewer clips",
+                    "Build a session inbox from one stream instead of one isolated file",
+                    "Prep shorts, stitch clip sequences, and keep the project autosaved locally",
+                    "Queue the strongest shorts into a later longform cut",
+                ],
             },
             {
-                icon: "🔧",
                 title: "Install required tools",
-                body: "The app needs FFmpeg and yt-dlp to download and process video. Hit Install and it handles everything automatically.",
+                body: "Install the core download and processing tools once. After that, the workflow can pull sources, clips, and exports locally.",
                 isRuntimeStep: true,
             },
             {
-                icon: "📝",
-                title: "Set up auto-captions",
-                body: "Captions need two Python packages in the same environment as the app. Install them here or skip for now.",
+                title: "Set Up Auto Captions",
+                body: "Captions need two Python packages in the same environment as the app. Install them here now or leave this for later.",
                 isDepsStep: true,
             },
             {
-                icon: "🔗",
-                title: "Paste your video URL",
-                body: "Drop in your source link. The editor loads the video, lets you mark clips, and keeps the project autosaved locally.",
-                features: ["YouTube, Twitch, TikTok and more", "Or drag in a local video file", "Detects duration and resolution automatically when available"],
+                title: "Ingest The Stream Session",
+                body: "Load a VOD, local recording, or connected Twitch archive. Then pull markers and existing clips into the inbox.",
+                features: [
+                    "Load a Twitch VOD directly from the connected account",
+                    "Import Twitch markers and viewer clips as starter edits",
+                    "Paste stream notes or marker timestamps to seed the inbox",
+                ],
             },
             {
-                icon: "✂️",
-                title: "Pick your moments",
-                body: "Set in and out timestamps for each clip. Stack multiple segments into one finished video.",
-                features: ["Timeline scrubber for precision", "Multiple clips in one export", "Pick from the most common delivery formats"],
+                title: "Build The Inbox, Then Prep Shorts",
+                body: "Refine clips, preview the sequence, and turn the best moments into short-ready pieces.",
+                features: [
+                    "Review imported moments alongside manual clips",
+                    "Prep one active clip or bulk prep the whole inbox",
+                    "Keep shortform choices and the longform queue in the same project",
+                ],
             },
             {
-                icon: "🚀",
-                title: "You're all set",
-                body: "Export an MP4 in the format you need, with captions burned in if you want them.",
-                features: ["Shorts/Reels, square, 4:5, and 16:9 output", "Speaker diarization (optional)", "Captions can always be added later"],
+                title: "Polish Captions And Publish Outputs",
+                body: "Run captions, choose delivery format, render shorts, and spin up the longform project when the session is ready.",
+                features: [
+                    "Burn captions into shorts or keep them for later",
+                    "Export Shorts, square, 4:5, or landscape versions",
+                    "Build a separate longform project from queued prepared shorts",
+                ],
                 isLast: true,
-                doneLabel: "Start Editing",
+                doneLabel: "Open Video Editor",
             },
         ],
     };
@@ -132,6 +172,21 @@ const App = (() => {
 
     function $(id) {
         return document.getElementById(id);
+    }
+
+    function normalizeThemeId(themeId) {
+        const normalized = String(themeId || "").trim();
+        return AVAILABLE_THEME_IDS.has(normalized) ? normalized : DEFAULT_THEME_ID;
+    }
+
+    function applyTheme(themeId) {
+        const normalized = normalizeThemeId(themeId);
+        document.documentElement.dataset.theme = normalized;
+        const select = $("setting-theme");
+        if (select && select.value !== normalized) {
+            select.value = normalized;
+        }
+        return normalized;
     }
 
     function show(el) {
@@ -750,6 +805,38 @@ const App = (() => {
             if (!busy) pyannoteInstallBtn.textContent = "Install pyannote.audio (1-click)";
         }
 
+        // Film Lab dependencies
+        const film = deps.film || {};
+        const filmInstallState = deps.film_install || {};
+        const filmMissing = film.required_missing || [];
+        const rawpyStatus = $("dep-rawpy-status");
+        const numpyStatus = $("dep-numpy-status");
+        if (rawpyStatus) {
+            if (film.rawpy?.installed) {
+                rawpyStatus.textContent = `✓ ${film.rawpy.version || "installed"}`;
+                rawpyStatus.className = "dep-status installed";
+            } else {
+                rawpyStatus.textContent = "✗ Needed";
+                rawpyStatus.className = "dep-status missing";
+            }
+        }
+        if (numpyStatus) {
+            if (film.numpy?.installed) {
+                numpyStatus.textContent = `✓ ${film.numpy.version || "installed"}`;
+                numpyStatus.className = "dep-status installed";
+            } else {
+                numpyStatus.textContent = "✗ Needed";
+                numpyStatus.className = "dep-status missing";
+            }
+        }
+        const filmInstallBtn = $("install-film-deps-btn");
+        if (filmInstallBtn) {
+            const busy = filmInstallState.status === "installing";
+            filmInstallBtn.classList.toggle("hidden", filmMissing.length === 0);
+            filmInstallBtn.disabled = busy;
+            filmInstallBtn.textContent = busy ? "Installing..." : "Install Film Lab deps (1-click)";
+        }
+
         const depPillValue = $("dependency-pill-value");
         if (depPillValue) {
             if (deps.bootstrap?.status === "installing") {
@@ -758,8 +845,12 @@ const App = (() => {
                 depPillValue.textContent = "Updating yt-dlp...";
             } else if (captionInstallState.status === "installing") {
                 depPillValue.textContent = "Installing captions...";
+            } else if (filmInstallState.status === "installing") {
+                depPillValue.textContent = "Installing Film Lab...";
             } else if (missing.length === 0) {
-                depPillValue.textContent = captionRequiredMissing.length > 0 ? "Captions Need Setup" : "Ready";
+                depPillValue.textContent = captionRequiredMissing.length > 0 ? "Captions Need Setup"
+                    : filmMissing.length > 0 ? "Film Lab Needs Setup"
+                    : "Ready";
             } else {
                 depPillValue.textContent = `Needs Setup (${missing.length})`;
             }
@@ -922,16 +1013,39 @@ const App = (() => {
         return deps;
     }
 
+    function getCaptionInstallButtons(includePyannote = false) {
+        const ids = includePyannote
+            ? ["install-pyannote-btn", "reel-caption-runtime-speaker-btn"]
+            : ["install-captioning-deps-btn", "reel-caption-runtime-install-btn"];
+        return ids.map((id) => $(id)).filter(Boolean);
+    }
+
+    function getCaptionInstallIdleLabel(buttonId, includePyannote = false) {
+        if (includePyannote) {
+            return buttonId === "reel-caption-runtime-speaker-btn"
+                ? "Install pyannote.audio (optional)"
+                : "Install pyannote.audio (1-click)";
+        }
+        return "Install faster-whisper + torch (1-click)";
+    }
+
+    function setCaptionInstallButtonState(includePyannote = false, busy = false) {
+        const busyLabel = includePyannote
+            ? "Installing pyannote.audio..."
+            : "Installing faster-whisper + torch...";
+        getCaptionInstallButtons(includePyannote).forEach((button) => {
+            button.disabled = busy;
+            button.textContent = busy
+                ? busyLabel
+                : getCaptionInstallIdleLabel(button.id, includePyannote);
+        });
+    }
+
     async function installCaptioningDeps(includePyannote = false) {
         if (captioningInstallInFlight) return;
         captioningInstallInFlight = true;
-
-        const btn = includePyannote ? $("install-pyannote-btn") : $("install-captioning-deps-btn");
         const label = includePyannote ? "pyannote.audio" : "faster-whisper + torch";
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = `Installing ${label}...`;
-        }
+        setCaptionInstallButtonState(includePyannote, true);
 
         setDependencyBanner(
             `<strong>Installing ${label}...</strong>`,
@@ -975,28 +1089,82 @@ const App = (() => {
             );
         } finally {
             captioningInstallInFlight = false;
-            if (btn && !btn.classList.contains("hidden")) {
-                btn.disabled = false;
-                btn.textContent = includePyannote
-                    ? "Install pyannote.audio (1-click)"
-                    : "Install faster-whisper + torch (1-click)";
+            setCaptionInstallButtonState(includePyannote, false);
+        }
+    }
+
+    let filmInstallInFlight = false;
+
+    async function installFilmDeps() {
+        if (filmInstallInFlight) return;
+        filmInstallInFlight = true;
+        const btn = $("install-film-deps-btn");
+        if (btn) { btn.disabled = true; btn.textContent = "Installing..."; }
+
+        setDependencyBanner(
+            "<strong>Installing Film Lab dependencies...</strong>",
+            "Installing rawpy and numpy via pip. This should only take a moment.",
+            false
+        );
+
+        try {
+            let deps = await api("/api/install-film-deps", { method: "POST" });
+            renderDependencyStatus(deps);
+
+            // Poll if still installing
+            let attempts = 0;
+            while ((deps?.film_install?.status || "idle") === "installing" && attempts < 30) {
+                attempts++;
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                deps = await api("/api/check-deps");
+                renderDependencyStatus(deps);
             }
+
+            const state = deps?.film_install || {};
+            if (state.status === "failed") {
+                setDependencyBanner(
+                    "<strong>Film Lab install failed.</strong>",
+                    escapeHtml(state.last_error || "Check internet access and retry."),
+                    true
+                );
+            } else {
+                setDependencyBanner(
+                    "<strong>Film Lab dependencies installed.</strong>",
+                    escapeHtml(state.message || "rawpy and numpy are ready."),
+                    false,
+                    6000
+                );
+            }
+        } catch (e) {
+            setDependencyBanner(
+                "<strong>Film Lab install failed.</strong>",
+                "Check your internet connection and try again.",
+                true
+            );
+        } finally {
+            filmInstallInFlight = false;
         }
     }
 
     // ── Onboarding ───────────────────────────────────────────────
 
-    function showOnboarding(flow) {
+    function showOnboarding(flow, options = {}) {
+        const startStep = Number(options.step || 0);
         onboardingFlow = flow;
-        onboardingStep = 0;
+        onboardingStep = Math.max(0, Math.min(startStep, (ONBOARDING_FLOWS[flow] || []).length - 1));
         renderOnboardingStep();
         const overlay = $("onboarding-overlay");
         if (overlay) overlay.classList.remove("hidden");
     }
 
     function skipOnboarding() {
+        const flow = ONBOARDING_FLOWS[onboardingFlow];
+        const step = flow?.[onboardingStep];
         const overlay = $("onboarding-overlay");
         if (overlay) overlay.classList.add("hidden");
+        if (step?.isChooserStep) {
+            localStorage.setItem(ONBOARDING_INTRO_DONE_KEY, "1");
+        }
         markOnboardingDone(onboardingFlow);
         onboardingFlow = null;
     }
@@ -1031,30 +1199,51 @@ const App = (() => {
         const isReel = $("mode-reel-btn")?.classList.contains("active");
         const mode = isReel ? "reel" : "alert";
         setPanelOpen("dependency-settings-panel", false);
-        showOnboarding(mode);
+        showOnboarding(mode, { step: 0 });
     }
 
     function checkOnboardingForMode(mode) {
+        if (onboardingFlow) return;
         if (!localStorage.getItem(`onboarding_${mode}_done`)) {
-            showOnboarding(mode);
+            const introDone = !!localStorage.getItem(ONBOARDING_INTRO_DONE_KEY);
+            showOnboarding(mode, { step: introDone ? 1 : 0 });
         }
+    }
+
+    function chooseOnboardingMode(mode) {
+        if (!ONBOARDING_FLOWS[mode]) return;
+        localStorage.setItem(ONBOARDING_INTRO_DONE_KEY, "1");
+        if (typeof switchMode === "function") {
+            switchMode(mode);
+        }
+        showOnboarding(mode, { step: 1 });
     }
 
     function renderOnboardingStep() {
         const flow = ONBOARDING_FLOWS[onboardingFlow];
         if (!flow) return;
         const step = flow[onboardingStep];
-        const total = flow.length;
-        const current = onboardingStep + 1;
+        const hasChooserStep = Boolean(flow[0]?.isChooserStep);
+        const showingChooser = Boolean(step?.isChooserStep);
+        const total = hasChooserStep && !showingChooser ? flow.length - 1 : flow.length;
+        const current = hasChooserStep && !showingChooser ? onboardingStep : onboardingStep + 1;
 
         const progressFill = $("onboarding-progress-fill");
         if (progressFill) progressFill.style.width = `${(current / total) * 100}%`;
 
         const stepLabel = $("onboarding-step-label");
-        if (stepLabel) stepLabel.textContent = `Step ${current} of ${total}`;
+        if (stepLabel) {
+            stepLabel.textContent = showingChooser
+                ? "Choose your starting tool"
+                : `Step ${current} of ${total}`;
+        }
 
         const icon = $("onboarding-icon");
-        if (icon) icon.textContent = step.icon;
+        if (icon) {
+            const iconText = String(step.icon || "").trim();
+            icon.textContent = iconText;
+            icon.classList.toggle("hidden", !iconText);
+        }
 
         const title = $("onboarding-title");
         if (title) title.textContent = step.title;
@@ -1064,7 +1253,9 @@ const App = (() => {
 
         const contentArea = $("onboarding-content-area");
         if (contentArea) {
-            if (step.isRuntimeStep) {
+            if (step.isChooserStep) {
+                contentArea.innerHTML = buildOnboardingChooserHtml(onboardingFlow);
+            } else if (step.isRuntimeStep) {
                 contentArea.innerHTML = buildOnboardingRuntimeHtml();
             } else if (step.isDepsStep) {
                 contentArea.innerHTML = buildOnboardingDepsHtml();
@@ -1081,7 +1272,60 @@ const App = (() => {
         if (backBtn) backBtn.classList.toggle("hidden", onboardingStep === 0);
 
         const nextBtn = $("onboarding-next-btn");
-        if (nextBtn) nextBtn.textContent = step.isLast ? (step.doneLabel || "Done") : "Next →";
+        if (nextBtn) {
+            nextBtn.disabled = Boolean(step.isChooserStep);
+            nextBtn.textContent = step.isChooserStep
+                ? "Choose a Tool Below"
+                : (step.isLast ? (step.doneLabel || "Done") : "Next");
+        }
+    }
+
+    function buildOnboardingChooserHtml(currentFlow) {
+        const cards = [
+            {
+                mode: "alert",
+                kicker: "Fast Utility Tool",
+                title: "Alert Creator",
+                body: "The single-source utility for quick downloads, audio swaps, level cleanup, and fast exports.",
+                features: [
+                    "Download one source from a URL or local file",
+                    "Replace audio, trim it, and normalize the final level",
+                    "Great for alerts, overlays, Discord clips, and quick promo exports",
+                ],
+            },
+            {
+                mode: "reel",
+                kicker: "Twitch VOD Workflow",
+                title: "Video Editor",
+                body: "The stream-session workflow for turning a Twitch VOD into an inbox, a stack of shorts, and a later longform cut.",
+                features: [
+                    "Pull connected Twitch VODs, markers, and viewer clips",
+                    "Prep shorts, stitch sequences, and run captions in one project",
+                    "Best when one stream needs many deliverables instead of one quick export",
+                ],
+            },
+        ];
+
+        return `<div class="onboarding-tool-grid">${
+            cards.map((card) => `
+                <div class="onboarding-tool-card ${card.mode === currentFlow ? "active" : ""}">
+                    <div class="onboarding-tool-kicker">${escapeHtml(card.kicker)}</div>
+                    <h3 class="onboarding-tool-title">${escapeHtml(card.title)}</h3>
+                    <p class="onboarding-tool-body">${escapeHtml(card.body)}</p>
+                    <div class="onboarding-features onboarding-tool-list">${
+                        card.features.map((feature) => `
+                            <div class="onboarding-feature">
+                                <div class="onboarding-feature-dot"></div>
+                                <span>${escapeHtml(feature)}</span>
+                            </div>
+                        `).join("")
+                    }</div>
+                    <button class="onboarding-install-btn onboarding-tool-start" onclick="App.chooseOnboardingMode('${card.mode}')">
+                        ${card.mode === currentFlow ? "Start Here" : `Start with ${escapeHtml(card.title)}`}
+                    </button>
+                </div>
+            `).join("")
+        }</div>`;
     }
 
     function buildOnboardingRuntimeHtml() {
@@ -1091,8 +1335,8 @@ const App = (() => {
         const busy     = dependencyInstallInFlight || lastDeps?.bootstrap?.status === "installing";
 
         const rows = [
-            { name: "FFmpeg / ffprobe", installed: ffmpegOk, label: ffmpegOk ? "✓ Installed" : "✗ Missing" },
-            { name: "yt-dlp",           installed: ytdlpOk,  label: ytdlpOk  ? "✓ Installed" : "✗ Missing" },
+            { name: "FFmpeg / ffprobe", installed: ffmpegOk, label: ffmpegOk ? "Installed" : "Missing" },
+            { name: "yt-dlp",           installed: ytdlpOk,  label: ytdlpOk  ? "Installed" : "Missing" },
         ];
 
         const rowsHtml = rows.map(r => `
@@ -1103,12 +1347,12 @@ const App = (() => {
 
         const installBtn = !allOk ? `
             <button class="onboarding-install-btn" onclick="App.onboardingInstallRuntime()" ${busy ? "disabled" : ""}>
-                ${busy ? "Installing..." : "Install Now (1-click, no admin required)"}
+                ${busy ? "Installing Tools..." : "Install Required Tools"}
             </button>` : "";
 
         const note = allOk
-            ? `<p class="onboarding-skip-note success">✓ All required tools installed — ready to go</p>`
-            : `<p class="onboarding-skip-note">Downloads to your local app folder, no admin needed</p>`;
+            ? `<p class="onboarding-skip-note success">All required tools are installed. You can move on.</p>`
+            : `<p class="onboarding-skip-note">Downloads into the app folder. No admin setup is required.</p>`;
 
         return `<div class="onboarding-deps-box">${rowsHtml}</div>${installBtn}${note}`;
     }
@@ -1138,17 +1382,17 @@ const App = (() => {
             {
                 name: "faster-whisper",
                 installed: fwInstalled,
-                label: fwInstalled ? `✓ ${captioning.faster_whisper?.version || "installed"}` : "✗ Not installed",
+                label: fwInstalled ? (captioning.faster_whisper?.version || "Installed") : "Missing",
             },
             {
                 name: "torch",
                 installed: torchInstalled,
-                label: torchInstalled ? `✓ ${captioning.torch?.cuda ? "CUDA" : "CPU"}` : "✗ Not installed",
+                label: torchInstalled ? (captioning.torch?.cuda ? "CUDA ready" : "CPU ready") : "Missing",
             },
             {
                 name: "pyannote.audio",
                 installed: pyannoteInstalled,
-                label: pyannoteInstalled ? `✓ ${captioning.pyannote_audio?.version || "installed"}` : "⚠ Optional",
+                label: pyannoteInstalled ? (captioning.pyannote_audio?.version || "Installed") : "Optional",
             },
         ];
 
@@ -1160,17 +1404,17 @@ const App = (() => {
 
         const installBtn = !bothRequired ? `
             <button class="onboarding-install-btn" onclick="App.onboardingInstallCaptioning(false)" ${busy ? "disabled" : ""}>
-                ${busy ? "Installing..." : "Install faster-whisper + torch (1-click)"}
+                ${busy ? "Installing Caption Runtime..." : "Install Caption Runtime"}
             </button>` : "";
 
         const pyannoteBtn = bothRequired && !pyannoteInstalled ? `
             <button class="onboarding-install-btn secondary" onclick="App.onboardingInstallCaptioning(true)" ${busy ? "disabled" : ""}>
-                ${busy ? "Installing..." : "Install pyannote.audio — optional, for speaker labels"}
+                ${busy ? "Installing Speaker Labels..." : "Install Speaker Labels Runtime"}
             </button>` : "";
 
         let skipNote = bothRequired
-            ? `<p class="onboarding-skip-note success">✓ Required packages installed — captions ready</p>`
-            : `<p class="onboarding-skip-note">You can skip this step and install later</p>`;
+            ? `<p class="onboarding-skip-note success">Required caption packages are installed.</p>`
+            : `<p class="onboarding-skip-note">You can skip this step and install captioning later.</p>`;
 
         if (installState.status === "installing") {
             skipNote = `<p class="onboarding-skip-note">${escapeHtml(installState.message || "Installing captioning packages...")}</p>`;
@@ -2636,6 +2880,7 @@ const App = (() => {
             normalizeAudio: $("setting-normalize-audio")?.checked ?? true,
             audioFadeDuration: $("setting-audio-fade-duration")?.value || "0.35",
             exportPreset: $("setting-export-preset")?.value || "stream_alert",
+            theme: normalizeThemeId($("setting-theme")?.value || document.documentElement.dataset.theme || DEFAULT_THEME_ID),
         };
     }
 
@@ -2656,21 +2901,26 @@ const App = (() => {
                     const el = $("setting-export-preset");
                     if (el) el.value = settings.exportPreset;
                 }
+                applyTheme(settings.theme || document.documentElement.dataset.theme || DEFAULT_THEME_ID);
+            } else {
+                applyTheme(document.documentElement.dataset.theme || DEFAULT_THEME_ID);
             }
         } catch (e) {
             // Ignore errors
+            applyTheme(document.documentElement.dataset.theme || DEFAULT_THEME_ID);
         }
 
         updateSettingsPanelLabels(getSettings());
 
         // Save on change
-        ["setting-resolution", "setting-buffer", "setting-normalize-audio", "setting-audio-fade-duration", "setting-export-preset"].forEach(id => {
+        ["setting-resolution", "setting-buffer", "setting-normalize-audio", "setting-audio-fade-duration", "setting-export-preset", "setting-theme"].forEach(id => {
             $(id)?.addEventListener("change", saveSettings);
         });
     }
 
     function saveSettings() {
         const settings = getSettings();
+        settings.theme = applyTheme(settings.theme);
         try {
             localStorage.setItem("alertCreatorSettings", JSON.stringify(settings));
         } catch (e) {
@@ -2684,6 +2934,8 @@ const App = (() => {
         $("setting-buffer").value = "2";
         $("setting-normalize-audio").checked = true;
         $("setting-audio-fade-duration").value = "0.35";
+        if ($("setting-export-preset")) $("setting-export-preset").value = "stream_alert";
+        applyTheme(DEFAULT_THEME_ID);
         saveSettings();
 
         // Visual feedback
@@ -2733,11 +2985,13 @@ const App = (() => {
         installMissingDependencies,
         updateYtdlp,
         installCaptioningDeps,
+        installFilmDeps,
         onboardingNext,
         onboardingBack,
         skipOnboarding,
         restartOnboarding,
         checkOnboardingForMode,
+        chooseOnboardingMode,
         onboardingInstallCaptioning,
         onboardingInstallRuntime,
         chooseOutputFolder,

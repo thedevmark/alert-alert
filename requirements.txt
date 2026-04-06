@@ -4,6 +4,8 @@ Pillow>=12.0
 typing_extensions
 waitress
 PySide6>=6.7
+rawpy>=0.21
+numpy>=1.24
 
 # Optional: Reel Maker caption pipeline (install separately)
 # pip install faster-whisper pyannote.audio torch

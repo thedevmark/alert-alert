@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import glob
+import plistlib  # Ensure frozen desktop builds bundle stdlib support used by pyannote.
 import re
 import mimetypes
 import platform
@@ -14,7 +15,7 @@ import importlib
 from functools import lru_cache
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
@@ -124,9 +125,21 @@ def reset_output_dir():
 
 def _shared_auth_origin():
     try:
-        return request.host_url.rstrip("/")
+        origin = request.host_url.rstrip("/")
     except Exception:
-        return f"http://{request.host}"
+        origin = f"http://{request.host}"
+
+    try:
+        parsed = urlsplit(origin)
+        hostname = (parsed.hostname or "").strip("[]").lower()
+        if parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+            netloc = "localhost"
+            if parsed.port:
+                netloc = f"{netloc}:{parsed.port}"
+            return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
+    except Exception:
+        pass
+    return origin
 
 
 def _decode_shared_auth_body(raw_bytes):
@@ -377,6 +390,12 @@ CAPTIONING_INSTALL_STATE = {
     "last_error": None,
 }
 CAPTIONING_INSTALL_LOCK = threading.Lock()
+FILM_INSTALL_STATE = {
+    "status": "idle",  # idle | installing | ready | failed
+    "message": "",
+    "last_error": None,
+}
+FILM_INSTALL_LOCK = threading.Lock()
 
 
 def _set_bootstrap_state(status, message="", error=None):
@@ -397,6 +416,91 @@ def _set_captioning_install_state(status, message="", error=None):
     CAPTIONING_INSTALL_STATE["last_error"] = error
 
 
+def _set_film_install_state(status, message="", error=None):
+    FILM_INSTALL_STATE["status"] = status
+    FILM_INSTALL_STATE["message"] = message
+    FILM_INSTALL_STATE["last_error"] = error
+
+
+def get_film_dependency_status():
+    """Return install status for Film Lab Python dependencies (rawpy, numpy)."""
+    result = {}
+    for pkg, import_name in (("rawpy", "rawpy"), ("numpy", "numpy")):
+        try:
+            mod = importlib.import_module(import_name)
+            result[pkg] = {
+                "installed": True,
+                "version": getattr(mod, "__version__", "installed"),
+            }
+        except Exception as e:
+            result[pkg] = {"installed": False, "version": None, "error": str(e)}
+    result["required_missing"] = [
+        pkg for pkg in ("rawpy", "numpy") if not result[pkg]["installed"]
+    ]
+    return result
+
+
+def _run_film_install():
+    """Install rawpy and numpy into the main Python environment via pip."""
+    with FILM_INSTALL_LOCK:
+        try:
+            python = _get_python_for_pip()
+            if not python:
+                _set_film_install_state("failed", "Install failed.", "No Python executable found for pip.")
+                return
+
+            packages = [
+                pkg for pkg in ("rawpy", "numpy")
+                if not importlib.import_module.__module__  # trigger check below
+            ]
+            # Re-check which are actually missing
+            packages = []
+            for pkg, import_name in (("rawpy", "rawpy"), ("numpy", "numpy")):
+                try:
+                    importlib.import_module(import_name)
+                except Exception:
+                    packages.append(pkg)
+
+            if not packages:
+                _set_film_install_state("ready", "Film Lab dependencies already installed.")
+                return
+
+            _set_film_install_state("installing", f"Installing {', '.join(packages)}...")
+            print(f"Film Lab install: pip install {' '.join(packages)}")
+
+            extra = {}
+            if platform.system() == "Windows":
+                extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            result = subprocess.run(
+                [python, "-m", "pip", "install", "--upgrade", "--prefer-binary"] + packages,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                **extra,
+            )
+            if result.returncode != 0:
+                error = (result.stderr or result.stdout or "pip install failed").strip()
+                print(f"Film Lab install failed: {error}")
+                _set_film_install_state("failed", "Install failed.", error)
+            else:
+                _set_film_install_state("ready", f"Installed: {', '.join(packages)}. Film Lab is ready.")
+                print(f"Film Lab install succeeded: {', '.join(packages)}")
+        except subprocess.TimeoutExpired:
+            _set_film_install_state("failed", "Install timed out.", "pip install exceeded 5-minute timeout")
+        except Exception as e:
+            _set_film_install_state("failed", "Install failed.", str(e))
+
+
+def install_film_deps_one_click():
+    """Start Film Lab dependency install if one is not already running."""
+    if FILM_INSTALL_STATE["status"] == "installing":
+        return False
+    thread = threading.Thread(target=_run_film_install, daemon=True)
+    thread.start()
+    return True
+
+
 def _required_missing(results):
     required = ("ffmpeg", "ffprobe", "yt-dlp")
     return [name for name in required if not results.get(name, {}).get("installed")]
@@ -412,9 +516,15 @@ def get_caption_dependency_status():
         result["faster_whisper"] = {
             "installed": True,
             "version": getattr(faster_whisper, "__version__", "unknown"),
+            "present_on_disk": True,
         }
     except Exception as e:
-        result["faster_whisper"] = {"installed": False, "version": None, "error": str(e)}
+        result["faster_whisper"] = {
+            "installed": False,
+            "version": None,
+            "error": str(e),
+            "present_on_disk": _caption_package_present_on_disk("faster_whisper"),
+        }
 
     try:
         import torch
@@ -424,6 +534,7 @@ def get_caption_dependency_status():
             "version": torch.__version__,
             "cuda": cuda_available,
             "device": torch.cuda.get_device_name(0) if cuda_available else "CPU",
+            "present_on_disk": True,
         }
     except Exception as e:
         result["torch"] = {
@@ -432,6 +543,7 @@ def get_caption_dependency_status():
             "cuda": False,
             "device": None,
             "error": str(e),
+            "present_on_disk": _caption_package_present_on_disk("torch"),
         }
 
     try:
@@ -439,9 +551,15 @@ def get_caption_dependency_status():
         result["pyannote_audio"] = {
             "installed": True,
             "version": getattr(pyannote.audio, "__version__", "unknown"),
+            "present_on_disk": True,
         }
     except Exception as e:
-        result["pyannote_audio"] = {"installed": False, "version": None, "error": str(e)}
+        result["pyannote_audio"] = {
+            "installed": False,
+            "version": None,
+            "error": str(e),
+            "present_on_disk": _caption_package_present_on_disk("pyannote_audio"),
+        }
 
     result["required_missing"] = [
         name for name in ("faster_whisper", "torch")
@@ -473,6 +591,8 @@ def _build_deps_payload(results):
     payload["ytdlp_update_available"] = bool(results.get("yt-dlp", {}).get("installed"))
     payload["captioning"] = get_caption_dependency_status()
     payload["captioning_install"] = dict(CAPTIONING_INSTALL_STATE)
+    payload["film"] = get_film_dependency_status()
+    payload["film_install"] = dict(FILM_INSTALL_STATE)
     return payload
 
 
@@ -692,6 +812,46 @@ def _get_caption_env_site_packages():
     return CAPTION_ENV_DIR / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
 
 
+def _caption_package_present_on_disk(name):
+    site_packages = _get_caption_env_site_packages()
+    if not site_packages.exists():
+        return False
+
+    probes = {
+        "faster_whisper": [
+            site_packages / "faster_whisper",
+            *site_packages.glob("faster_whisper-*.dist-info"),
+        ],
+        "torch": [
+            site_packages / "torch",
+            *site_packages.glob("torch-*.dist-info"),
+        ],
+        "pyannote_audio": [
+            site_packages / "pyannote",
+            *site_packages.glob("pyannote_audio-*.dist-info"),
+        ],
+    }
+    return any(path.exists() for path in probes.get(name, []))
+
+
+def _add_caption_runtime_dir(path):
+    if not path.exists():
+        return
+
+    path_str = str(path)
+    current_path = os.environ.get("PATH", "")
+    segments = current_path.split(os.pathsep) if current_path else []
+    if path_str not in segments:
+        os.environ["PATH"] = path_str + os.pathsep + current_path
+
+    if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
+        try:
+            handle = os.add_dll_directory(path_str)
+            CAPTION_ENV_DLL_HANDLES.append(handle)
+        except OSError:
+            pass
+
+
 def ensure_captioning_import_paths():
     """Expose managed captioning site-packages to the current process."""
     site_packages = _get_caption_env_site_packages()
@@ -703,17 +863,15 @@ def ensure_captioning_import_paths():
         sys.path.insert(0, site_packages_str)
 
     if platform.system() == "Windows":
-        torch_lib_dir = site_packages / "torch" / "lib"
-        if torch_lib_dir.exists():
-            torch_lib_dir_str = str(torch_lib_dir)
-            if torch_lib_dir_str not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = torch_lib_dir_str + os.pathsep + os.environ.get("PATH", "")
-            if hasattr(os, "add_dll_directory"):
-                try:
-                    handle = os.add_dll_directory(torch_lib_dir_str)
-                    CAPTION_ENV_DLL_HANDLES.append(handle)
-                except OSError:
-                    pass
+        runtime_dirs = [
+            site_packages / "torch" / "lib",
+            site_packages / "torch" / "bin",
+            site_packages / "torchaudio" / "lib",
+            site_packages / "torchcodec",
+            site_packages / "onnxruntime" / "capi",
+        ]
+        for runtime_dir in runtime_dirs:
+            _add_caption_runtime_dir(runtime_dir)
 
     importlib.invalidate_caches()
 
@@ -815,13 +973,38 @@ def _validate_captioning_runtime(include_pyannote=False):
         error_lines = []
         for name in missing:
             detail = status.get(name, {}).get("error")
+            present_on_disk = bool(status.get(name, {}).get("present_on_disk"))
             if detail:
+                detail_lower = str(detail).lower()
+                extra_notes = []
+                if present_on_disk:
+                    extra_notes.append(
+                        "Package files exist in the managed captioning environment, so this is now a runtime import issue."
+                    )
+                if getattr(sys, "frozen", False) and "no module named 'plistlib'" in detail_lower:
+                    extra_notes.append(
+                        "This desktop build is missing Python's plistlib module. Rebuild or reinstall the desktop app with the updated captioning runtime packaging fix."
+                    )
+                if extra_notes:
+                    detail = f"{detail} {' '.join(extra_notes)}"
                 error_lines.append(f"{name}: {detail}")
         detail_text = " ".join(error_lines).strip()
         if detail_text:
             raise RuntimeError(detail_text)
         raise RuntimeError(f"Missing modules after install: {', '.join(missing)}")
     return status
+
+
+def _get_caption_packages_to_install(include_pyannote=False):
+    status = get_caption_dependency_status()
+    packages = []
+    if not status.get("faster_whisper", {}).get("installed"):
+        packages.append("faster-whisper")
+    if not status.get("torch", {}).get("installed"):
+        packages.append("torch")
+    if include_pyannote and not status.get("pyannote_audio", {}).get("installed"):
+        packages.append("pyannote.audio")
+    return packages
 
 
 def _run_captioning_install(include_pyannote=False):
@@ -831,9 +1014,14 @@ def _run_captioning_install(include_pyannote=False):
             python_cmd = _ensure_captioning_env()
             python_exe = python_cmd[0]
 
-            packages = ["faster-whisper", "torch"]
-            if include_pyannote:
-                packages.append("pyannote.audio")
+            target_label = "pyannote.audio" if include_pyannote else "faster-whisper + torch"
+            packages = _get_caption_packages_to_install(include_pyannote=include_pyannote)
+            if not packages:
+                ensure_captioning_import_paths()
+                _validate_captioning_runtime(include_pyannote=include_pyannote)
+                _set_captioning_install_state("ready", f"{target_label} already installed. Captioning is ready.")
+                return
+
             label = " + ".join(packages)
             _set_captioning_install_state("installing", f"Installing {label}...")
             print(f"Captioning install: {' '.join(python_cmd)} -m pip install --upgrade --prefer-binary {' '.join(packages)}")
@@ -882,9 +1070,17 @@ def install_captioning_deps_one_click(include_pyannote=False):
     if CAPTIONING_INSTALL_STATE.get("status") == "installing":
         return False
 
-    packages = ["faster-whisper", "torch"]
-    if include_pyannote:
-        packages.append("pyannote.audio")
+    target_label = "pyannote.audio" if include_pyannote else "faster-whisper + torch"
+    packages = _get_caption_packages_to_install(include_pyannote=include_pyannote)
+    if not packages:
+        try:
+            ensure_captioning_import_paths()
+            _validate_captioning_runtime(include_pyannote=include_pyannote)
+            _set_captioning_install_state("ready", f"{target_label} already installed. Captioning is ready.")
+        except Exception as e:
+            _set_captioning_install_state("failed", "Install failed.", str(e))
+        return False
+
     label = " + ".join(packages)
     _set_captioning_install_state("installing", f"Installing {label}...")
     thread = threading.Thread(
@@ -914,6 +1110,12 @@ def bootstrap_deps():
 def update_ytdlp():
     results = update_ytdlp_one_click()
     return jsonify(_build_deps_payload(results))
+
+
+@app.route("/api/install-film-deps", methods=["POST"])
+def install_film_deps_route():
+    install_film_deps_one_click()
+    return jsonify(_build_deps_payload(run_deps_check()))
 
 
 @app.route("/api/install-captioning-deps", methods=["POST"])
@@ -1006,6 +1208,31 @@ def shared_auth_twitch_markers():
 @app.route("/api/shared-auth/twitch/clips")
 def shared_auth_twitch_clips():
     return _proxy_shared_auth_request("/twitch/clips")
+
+
+@app.route("/api/shared-auth/editor-summary")
+def shared_auth_editor_summary():
+    return _proxy_shared_auth_request("/editor/summary")
+
+
+@app.route("/api/shared-auth/editor-summary", methods=["PUT"])
+def shared_auth_update_editor_summary():
+    return _proxy_shared_auth_request("/editor/summary", method="PUT")
+
+
+@app.route("/api/shared-auth/editor-feed")
+def shared_auth_editor_feed():
+    return _proxy_shared_auth_request("/editor/feed")
+
+
+@app.route("/api/shared-auth/editor-feed", methods=["POST"])
+def shared_auth_create_editor_feed():
+    return _proxy_shared_auth_request("/editor/feed", method="POST")
+
+
+@app.route("/api/shared-auth/editor-feed", methods=["DELETE"])
+def shared_auth_delete_editor_feed():
+    return _proxy_shared_auth_request("/editor/feed", method="DELETE")
 
 
 def run_deps_check(force=False):
@@ -1527,6 +1754,9 @@ register_reel_routes(app)
 
 from captions import register_caption_routes
 register_caption_routes(app)
+
+from film import register_film_routes
+register_film_routes(app)
 
 
 # ── Run ─────────────────────────────────────────────────────────

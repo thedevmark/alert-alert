@@ -5,6 +5,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alert! Alert!</title>
+    <script>
+        (() => {
+            const defaultTheme = "cobalt-night";
+            const allowedThemes = new Set([
+                "cobalt-night",
+                "graphite-terminal",
+                "nord-stack",
+                "forest-syntax",
+                "signal-teal",
+            ]);
+            try {
+                const raw = window.localStorage.getItem("alertCreatorSettings");
+                const saved = raw ? JSON.parse(raw) : null;
+                const theme = String(saved?.theme || defaultTheme);
+                document.documentElement.dataset.theme = allowedThemes.has(theme) ? theme : defaultTheme;
+            } catch (error) {
+                document.documentElement.dataset.theme = defaultTheme;
+            }
+        })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/static/img/app-icon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 
@@ -15,6 +37,7 @@
             <div class="mode-toggle" id="mode-toggle">
                 <button class="mode-btn active" id="mode-alert-btn" onclick="switchMode('alert')">Alert Creator</button>
                 <button class="mode-btn" id="mode-reel-btn" onclick="switchMode('reel')">Video Editor</button>
+                <button class="mode-btn" id="mode-film-btn" onclick="switchMode('film')">Film Lab</button>
             </div>
         </div>
         <div class="header-actions">
@@ -99,6 +122,29 @@
                             onclick="App.installCaptioningDeps(false)">Install faster-whisper + torch (1-click)</button>
                         <button id="install-pyannote-btn" class="settings-reset hidden" type="button"
                             onclick="App.installCaptioningDeps(true)">Install pyannote.audio (1-click)</button>
+                        <label class="settings-label" style="margin-top: 12px;">Film Lab Dependencies</label>
+                        <div class="dep-links">
+                            <div class="dep-link">
+                                <span class="dep-icon">📷</span>
+                                <span class="dep-name">rawpy (RAW file support)</span>
+                                <span class="dep-status" id="dep-rawpy-status">checking...</span>
+                            </div>
+                            <div class="dep-link">
+                                <span class="dep-icon">🔢</span>
+                                <span class="dep-name">numpy (image processing)</span>
+                                <span class="dep-status" id="dep-numpy-status">checking...</span>
+                            </div>
+                        </div>
+                        <button id="install-film-deps-btn" class="settings-reset hidden" type="button"
+                            onclick="App.installFilmDeps()">Install Film Lab deps (1-click)</button>
+                        <label class="settings-label" style="margin-top: 12px;">Color Theme</label>
+                        <select id="setting-theme" class="settings-select">
+                            <option value="cobalt-night">Cobalt Night</option>
+                            <option value="graphite-terminal">Graphite Terminal</option>
+                            <option value="nord-stack">Nord Stack</option>
+                            <option value="forest-syntax">Forest Syntax</option>
+                            <option value="signal-teal">Signal Teal</option>
+                        </select>
                         <label class="settings-label" style="margin-top: 12px;">Save Location</label>
                         <div class="storage-settings">
                             <input type="text" id="output-dir-input" class="settings-select" spellcheck="false"
@@ -131,7 +177,7 @@
     <!-- Onboarding Overlay -->
     <div id="onboarding-overlay" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <div class="onboarding-card">
-            <button class="onboarding-skip" id="onboarding-skip-btn" onclick="App.skipOnboarding()" title="Skip tour" aria-label="Skip tour">✕</button>
+            <button class="onboarding-skip" id="onboarding-skip-btn" onclick="App.skipOnboarding()" title="Skip tour" aria-label="Skip tour">Skip</button>
             <div class="onboarding-progress-bar">
                 <div class="onboarding-progress-fill" id="onboarding-progress-fill"></div>
             </div>
@@ -141,8 +187,8 @@
             <p class="onboarding-body" id="onboarding-body"></p>
             <div id="onboarding-content-area"></div>
             <div class="onboarding-nav">
-                <button class="onboarding-back-btn hidden" id="onboarding-back-btn" onclick="App.onboardingBack()">← Back</button>
-                <button class="onboarding-next-btn" id="onboarding-next-btn" onclick="App.onboardingNext()">Next →</button>
+                <button class="onboarding-back-btn hidden" id="onboarding-back-btn" onclick="App.onboardingBack()">Back</button>
+                <button class="onboarding-next-btn" id="onboarding-next-btn" onclick="App.onboardingNext()">Next</button>
             </div>
         </div>
     </div>
@@ -461,96 +507,210 @@
 
     <!-- ── Reel Maker Workflow ── -->
     <main class="reel-layout hidden" id="reel-workflow">
-        <div class="reel-menubar" aria-label="Desktop editor chrome">
-            <span class="reel-menu-item">File</span>
-            <span class="reel-menu-item">Edit</span>
-            <span class="reel-menu-item">Clip</span>
-            <span class="reel-menu-item">View</span>
-            <span class="reel-menu-item">Deliver</span>
+        <div class="reel-menubar" aria-label="Streamer workflow navigation">
+            <div class="reel-menu-group">
+                <button type="button" id="reel-menu-file-btn" class="reel-menu-item reel-menu-trigger" data-reel-menu="file"
+                    aria-haspopup="true" aria-expanded="false" onclick="ReelMaker.toggleMenu('file')">Project</button>
+                <div id="reel-menu-file-panel" class="reel-menu-panel" role="menu" aria-labelledby="reel-menu-file-btn">
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Projects</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.startNewProject()">New Project</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.reloadRecentProjects()">Refresh Projects</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Workspaces</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('session')">Open Session Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('inbox')">Open Inbox Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('inspector')">Open Inspector Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('captions')">Open Captions Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('output')">Open Output Workspace</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Panels</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusPanel('project-browser')">Project Browser</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusPanel('project-files')">Project Files</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.resetWorkspacePanels()">Reset Current Layout</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="reel-menu-group">
+                <button type="button" id="reel-menu-edit-btn" class="reel-menu-item reel-menu-trigger" data-reel-menu="edit"
+                    aria-haspopup="true" aria-expanded="false" onclick="ReelMaker.toggleMenu('edit')">Ingest</button>
+                <div id="reel-menu-edit-panel" class="reel-menu-panel" role="menu" aria-labelledby="reel-menu-edit-btn">
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Source Video</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('session')">Open Session Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusSourceInput()">Use URL Source</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setSourceType('file')">Use Local File Source</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.validateUrl()">Load Current URL</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.openLocalVodPicker()">Browse File</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Twitch Session</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="DmAuth.login()">Login with Twitch</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="DmAuth.applyToVideoEditor()">Use Connected Twitch</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.loadConnectedTwitchVideos()">Refresh Twitch VODs</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.loadSelectedConnectedTwitchVod()">Load Selected VOD</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Populate Inbox</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.importSourceMoments()">Import Source Moments</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.importMarkersFromConnectedVod()">Import Twitch Markers</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.loadConnectedTwitchClips()">Load Twitch Clips</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.importClipsFromConnectedVod()">Import Twitch Clips</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.importStreamMarkers()">Import Marker Clips</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="reel-menu-group">
+                <button type="button" id="reel-menu-clip-btn" class="reel-menu-item reel-menu-trigger" data-reel-menu="clip"
+                    aria-haspopup="true" aria-expanded="false" onclick="ReelMaker.toggleMenu('clip')">Inbox</button>
+                <div id="reel-menu-clip-panel" class="reel-menu-panel reel-menu-panel-wide" role="menu" aria-labelledby="reel-menu-clip-btn">
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Build Clip Inbox</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.addClip()">Add Clip</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.importSourceMoments()">Import Moments</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.detectMoments()">Detect Moments</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Review</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusStep(2)">Open Clip Inbox</button>
+                            <button id="reel-preview-source-btn" type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.previewSource()">Clip Preview</button>
+                            <button id="reel-preview-sequence-btn" type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.previewSequence()">Project Preview</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Prep for Shorts</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.prepareActiveClipAsShort()">Prep Active Clip</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.bulkPrepareShorts('all')">Prep All Inbox</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.bulkPrepareShorts('twitch_clips')">Prep Twitch Clips</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="reel-menu-group">
+                <button type="button" id="reel-menu-view-btn" class="reel-menu-item reel-menu-trigger" data-reel-menu="view"
+                    aria-haspopup="true" aria-expanded="false" onclick="ReelMaker.toggleMenu('view')">Shorts</button>
+                <div id="reel-menu-view-panel" class="reel-menu-panel" role="menu" aria-labelledby="reel-menu-view-btn">
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Caption Pass</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setWorkspace('captions')">Open Captions Workspace</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.transcribe()">Run Caption Pass</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusPanel('captions')">Caption Settings</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Runtime</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action"
+                                onclick="App.openSettingsPanel('dependency-settings-panel', 'reel-step-3')">Caption Runtime</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="App.installCaptioningDeps(false)">Install Caption Runtime</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="App.installCaptioningDeps(true)">Install Speaker Labels</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="reel-menu-group">
+                <button type="button" id="reel-menu-deliver-btn" class="reel-menu-item reel-menu-trigger" data-reel-menu="deliver"
+                    aria-haspopup="true" aria-expanded="false" onclick="ReelMaker.toggleMenu('deliver')">Output</button>
+                <div id="reel-menu-deliver-panel" class="reel-menu-panel reel-menu-panel-wide reel-menu-panel-align-right" role="menu" aria-labelledby="reel-menu-deliver-btn">
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Longform Build</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setLongformQueueForPrepared(true)">Queue All Prepared</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setLongformQueueForPrepared(false)">Skip All Prepared</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.createLongformVersion()">Build Longform Project</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.openPendingLongformProject()">Open Longform Project</button>
+                        </div>
+                    </div>
+                    <div class="reel-menu-section">
+                        <span class="reel-menu-section-label">Render Current Project</span>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setExportFormatPreset('shorts')">Shorts / Reels</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setExportFormatPreset('portrait_feed')">4:5 Feed</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setExportFormatPreset('square')">Square</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.setExportFormatPreset('landscape')">16:9 Landscape</button>
+                        </div>
+                        <div class="reel-menu-actions">
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.focusStep(4)">Open Longform &amp; Output</button>
+                            <button type="button" class="toolbar-btn toolbar-btn-primary reel-menu-action" onclick="ReelMaker.exportReel()">Render Video</button>
+                            <button type="button" class="toolbar-btn reel-menu-action" onclick="ReelMaker.downloadReel()">Download</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <span class="reel-menu-divider"></span>
-            <span id="reel-window-project-label" class="reel-menu-project">Video Editor Workspace</span>
+            <span id="reel-window-project-label" class="reel-menu-project">Streamer Workflow Workspace</span>
         </div>
 
-        <div class="desktop-toolbar reel-desktop-toolbar">
-            <div class="toolbar-group">
-                <span class="toolbar-label">Project</span>
-                <button type="button" class="toolbar-btn" onclick="ReelMaker.reloadRecentProjects()">Refresh</button>
-                <button type="button" class="toolbar-btn" onclick="ReelMaker.startNewProject()">New</button>
+        <div class="reel-workspace-strip" aria-label="Workspace and panel controls">
+            <div class="reel-workspace-tabs" role="tablist" aria-label="Workflow workspaces">
+                <button type="button" id="reel-workspace-session-btn" class="reel-workspace-btn" data-reel-workspace="session"
+                    onclick="ReelMaker.setWorkspace('session')">Session</button>
+                <button type="button" id="reel-workspace-inbox-btn" class="reel-workspace-btn" data-reel-workspace="inbox"
+                    onclick="ReelMaker.setWorkspace('inbox')">Inbox</button>
+                <button type="button" id="reel-workspace-inspector-btn" class="reel-workspace-btn" data-reel-workspace="inspector"
+                    onclick="ReelMaker.setWorkspace('inspector')">Inspector</button>
+                <button type="button" id="reel-workspace-captions-btn" class="reel-workspace-btn" data-reel-workspace="captions"
+                    onclick="ReelMaker.setWorkspace('captions')">Captions</button>
+                <button type="button" id="reel-workspace-output-btn" class="reel-workspace-btn" data-reel-workspace="output"
+                    onclick="ReelMaker.setWorkspace('output')">Output</button>
             </div>
+            <div class="reel-panel-toggles" aria-label="Panel visibility">
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="project-browser"
+                    onclick="ReelMaker.toggleWorkspacePanel('project-browser')">Browser</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="project-files"
+                    onclick="ReelMaker.toggleWorkspacePanel('project-files')">Files</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="session"
+                    onclick="ReelMaker.toggleWorkspacePanel('session')">Session</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="inbox"
+                    onclick="ReelMaker.toggleWorkspacePanel('inbox')">Inbox</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="inspector"
+                    onclick="ReelMaker.toggleWorkspacePanel('inspector')">Inspector</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="captions"
+                    onclick="ReelMaker.toggleWorkspacePanel('captions')">Captions</button>
+                <button type="button" class="reel-panel-toggle" data-reel-panel-toggle="output"
+                    onclick="ReelMaker.toggleWorkspacePanel('output')">Output</button>
+                <button type="button" class="reel-panel-toggle reel-panel-toggle-reset" onclick="ReelMaker.resetWorkspacePanels()">Reset Layout</button>
+            </div>
+        </div>
 
-            <div class="toolbar-group toolbar-group-wide">
-                <span class="toolbar-label">Source</span>
-                <div class="source-toggle toolbar-toggle">
-                    <button class="source-btn active" id="reel-source-url-btn" onclick="ReelMaker.setSourceType('url')">URL</button>
-                    <button class="source-btn" id="reel-source-file-btn" onclick="ReelMaker.setSourceType('file')">Local File</button>
-                </div>
-                <input type="text" id="reel-url-input" class="toolbar-input" placeholder="Paste video URL (YouTube, TikTok, Twitch, etc.)..." spellcheck="false">
-                <button id="reel-validate-btn" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.validateUrl()">Load Video</button>
-                <button type="button" class="toolbar-btn" onclick="ReelMaker.openLocalVodPicker()">Browse File</button>
-            </div>
-
-            <div class="toolbar-group">
-                <span class="toolbar-label">Preview</span>
-                <button id="reel-preview-source-btn" class="toolbar-btn" onclick="ReelMaker.previewSource()">Clip</button>
-                <button id="reel-preview-sequence-btn" class="toolbar-btn" onclick="ReelMaker.previewSequence()">Project</button>
-            </div>
-
-            <div class="toolbar-group">
-                <span class="toolbar-label">Edit</span>
-                <button id="reel-add-clip-btn" class="toolbar-btn" onclick="ReelMaker.addClip()">Add Clip</button>
-                <button id="reel-import-moments-btn" class="toolbar-btn" onclick="ReelMaker.importSourceMoments()">Import Moments</button>
-                <button id="reel-download-clips-btn" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch</button>
-                <span id="reel-total-duration" class="toolbar-label" title="Total reel duration based on clip ranges"></span>
-            </div>
-
-            <div class="toolbar-group">
-                <span class="toolbar-label">Captions</span>
-                <select id="reel-caption-language" class="settings-select toolbar-select">
-                    <option value="">Auto-detect</option>
-                    <option value="en" selected>English</option>
-                    <option value="de">German</option>
-                    <option value="es">Spanish</option>
-                    <option value="fr">French</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
-                    <option value="pt">Portuguese</option>
-                    <option value="zh">Chinese</option>
-                </select>
-                <select id="reel-whisper-model" class="settings-select toolbar-select" title="Smaller = faster. Larger = more accurate. Large v3 recommended for streams.">
-                    <option value="tiny">Tiny (fastest, ~32x RT)</option>
-                    <option value="base">Base (~20x RT)</option>
-                    <option value="small">Small (~8x RT)</option>
-                    <option value="medium">Medium (~4x RT)</option>
-                    <option value="large-v3" selected>Large v3 (~1x RT, best)</option>
-                </select>
-                <button id="reel-transcribe-btn" class="toolbar-btn" onclick="ReelMaker.transcribe()" disabled>Transcribe</button>
-                <label class="toolbar-checkbox-label" title="Start transcription automatically after clips finish downloading">
-                    <input type="checkbox" id="reel-auto-transcribe"> Auto
-                </label>
-            </div>
-
-            <div class="toolbar-group toolbar-group-formats">
-                <span class="toolbar-label">Delivery Summary</span>
-                <span id="reel-export-format-summary" class="toolbar-label reel-export-format-summary">1080x1920 MP4</span>
-                <span id="reel-export-composition-summary" class="toolbar-label reel-export-composition-summary">Gameplay Focus vertical framing</span>
-                <span id="reel-export-burn-summary" class="toolbar-label reel-export-composition-summary">Captions will burn in</span>
-            </div>
-
-            <div class="toolbar-group">
-                <span class="toolbar-label">Deliver</span>
-                <button type="button" class="toolbar-btn" onclick="ReelMaker.focusStep(3)">Captions</button>
-                <button type="button" class="toolbar-btn toolbar-btn-primary" onclick="ReelMaker.focusStep(4)">Open Deliver Panel</button>
-            </div>
+        <div class="reel-toolbar-summary" aria-label="Streamer workflow summary">
+            <span id="reel-toolbar-project-summary" class="reel-summary-chip">No project loaded</span>
+            <span id="reel-toolbar-workspace-summary" class="reel-summary-chip">Workspace: Session</span>
+            <span id="reel-toolbar-source-summary" class="reel-summary-chip">Source: URL</span>
+            <span id="reel-total-duration" class="reel-summary-chip" title="Total reel duration based on clip ranges"></span>
+            <span id="reel-export-format-summary" class="reel-summary-chip reel-export-format-summary">1080x1920 MP4</span>
+            <span id="reel-export-composition-summary" class="reel-summary-chip reel-export-composition-summary">Gameplay Focus vertical framing</span>
+            <span id="reel-export-burn-summary" class="reel-summary-chip reel-export-composition-summary">Captions will burn in</span>
         </div>
 
         <div id="reel-operation-rail" class="reel-operation-rail hidden">
             <span id="reel-operation-pill" class="reel-operation-pill">Info</span>
-            <span id="reel-operation-text" class="reel-operation-text">Workflow updates will appear here.</span>
+            <span id="reel-operation-text" class="reel-operation-text">Ingest, shorts, and longform updates will appear here.</span>
         </div>
 
         <div class="main-layout reel-workspace">
             <aside class="reel-dock reel-left-dock">
-                <section class="reel-dock-panel reel-project-browser">
+                <section id="reel-project-browser-panel" class="reel-dock-panel reel-project-browser" data-reel-panel="project-browser">
                     <div class="reel-dock-header">
                         <div>
                             <p class="reel-dock-kicker">Project</p>
@@ -573,7 +733,7 @@
                     </div>
                 </section>
 
-                <section id="reel-assets-card" class="reel-dock-panel hidden">
+                <section id="reel-assets-card" class="reel-dock-panel hidden" data-reel-panel="project-files">
                     <div class="reel-dock-header">
                         <div>
                             <p class="reel-dock-kicker">Media</p>
@@ -586,7 +746,7 @@
             </aside>
 
             <section class="reel-center-stage">
-                <section class="reel-monitor-shell">
+                <section id="reel-monitor-panel" class="reel-monitor-shell" data-reel-panel="monitor">
                     <div class="reel-monitor-header">
                         <div>
                             <p class="reel-dock-kicker">Monitor</p>
@@ -682,8 +842,8 @@
                     </aside>
                 </section>
 
-                <section class="step disabled reel-step-center" id="reel-step-2">
-                    <h2><span class="step-num">2</span> Edit &amp; Review</h2>
+                <section class="step disabled reel-step-center" id="reel-step-2" data-reel-panel="inbox">
+                    <h2><span class="step-num">2</span> Clip Inbox &amp; Cut</h2>
                     <div class="step-content">
                         <div class="reel-edit-header">
                             <div>
@@ -694,14 +854,29 @@
                         </div>
                         <p class="settings-hint">Add timestamp ranges from the source video to include in the final edit.</p>
                         <p id="reel-source-moments-status" class="settings-hint">Source highlights and chapters will appear here when the platform exposes them.</p>
+                        <div class="reel-helper-card reel-inbox-command-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Inbox Commands</p>
+                                    <h4>Build and prep the cut list</h4>
+                                </div>
+                            </div>
+                            <div class="reel-streamer-actions">
+                                <button id="reel-add-clip-btn" type="button" class="secondary-btn" onclick="ReelMaker.addClip()">Add Clip</button>
+                                <button id="reel-import-moments-btn" type="button" class="secondary-btn" onclick="ReelMaker.importSourceMoments()">Import Moments</button>
+                                <button id="reel-detect-moments-btn" type="button" class="secondary-btn"
+                                        onclick="ReelMaker.detectMoments()" title="Auto-detect speech segments in a local video file to suggest clips">
+                                    Detect Moments
+                                </button>
+                                <button type="button" class="secondary-btn" onclick="ReelMaker.focusPanel('inspector')">Open Inspector</button>
+                                <button id="reel-download-clips-btn" type="button" class="secondary-btn" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch</button>
+                            </div>
+                            <p class="settings-hint">Use the inbox to collect moments, prep the best ones, then stitch the current short stack before captioning.</p>
+                        </div>
                         <div class="reel-clip-workbench">
                             <div id="reel-clip-list" class="clip-list"></div>
                         </div>
                         <div id="reel-clip-actions" class="hidden" style="margin-top:12px;">
-                            <button type="button" class="secondary-btn" id="reel-detect-moments-btn"
-                                    onclick="ReelMaker.detectMoments()" title="Auto-detect speech segments in a local video file to suggest clips">
-                                Detect Moments
-                            </button>
                             <p id="reel-detect-moments-status" class="info-label hidden"></p>
                             <div id="reel-download-status" class="hidden" style="margin-top:8px;">
                                 <div class="progress-bar-bg">
@@ -716,23 +891,47 @@
             </section>
 
             <div class="workflow-steps reel-right-dock">
-                <!-- Step R1: Session & Source -->
-                <section class="step" id="reel-step-1">
-                    <h2><span class="step-num">1</span> Session &amp; Source</h2>
+                <!-- Step R1: Session & Ingest -->
+                <section class="step" id="reel-step-1" data-reel-panel="session">
+                    <h2><span class="step-num">1</span> Session &amp; Ingest</h2>
                     <div class="step-content">
-                        <div id="reel-url-section" class="hidden">
-                            <p class="settings-hint">Use the toolbar above to load a remote video URL.</p>
+                        <div class="reel-helper-card reel-source-intake-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Source Intake</p>
+                                    <h4>Choose the source video</h4>
+                                </div>
+                                <div class="source-toggle toolbar-toggle reel-source-toggle">
+                                    <button class="source-btn active" id="reel-source-url-btn" onclick="ReelMaker.setSourceType('url')">URL</button>
+                                    <button class="source-btn" id="reel-source-file-btn" onclick="ReelMaker.setSourceType('file')">Local File</button>
+                                </div>
+                            </div>
+                            <div id="reel-url-section" class="hidden reel-source-pane">
+                                <label class="reel-streamer-field reel-streamer-field-wide">
+                                    <span>Source URL</span>
+                                    <input type="text" id="reel-url-input" placeholder="Paste Twitch, YouTube, TikTok, or another supported video URL..." spellcheck="false">
+                                </label>
+                                <div class="reel-streamer-actions">
+                                    <button id="reel-validate-btn" type="button" class="secondary-btn" onclick="ReelMaker.validateUrl()">Load Video</button>
+                                    <button type="button" class="secondary-btn" onclick="ReelMaker.focusSourceInput()">Focus URL Field</button>
+                                </div>
+                                <p class="settings-hint">Use a remote VOD URL when you want source moments, chapters, or Twitch-connected ingest to populate the inbox.</p>
+                            </div>
                         </div>
 
-                        <div id="reel-file-section" class="hidden">
+                        <div id="reel-file-section" class="hidden reel-source-pane">
                             <div class="file-upload-area" id="reel-file-drop-zone">
                                 <input type="file" id="reel-video-input" accept="video/*" class="hidden">
                                 <div class="file-upload-content">
                                     <span class="file-upload-icon">&#128193;</span>
-                                    <p>Drag & drop video file here</p>
+                                    <p>Drag &amp; drop video file here</p>
                                     <p class="file-upload-hint">or <button type="button" class="link-btn" onclick="document.getElementById('reel-video-input').click()">browse files</button></p>
                                 </div>
                             </div>
+                            <div class="reel-streamer-actions">
+                                <button type="button" class="secondary-btn" onclick="ReelMaker.openLocalVodPicker()">Browse Local File</button>
+                            </div>
+                            <p class="settings-hint">Use a local recording when you already have the VOD downloaded and want to mark clips directly.</p>
                         </div>
 
                         <div id="reel-vod-info" class="hidden">
@@ -930,7 +1129,7 @@
                     </div>
                 </section>
 
-                <aside id="reel-clip-inspector" class="reel-clip-inspector hidden">
+                <aside id="reel-clip-inspector" class="reel-clip-inspector hidden" data-reel-panel="inspector">
                     <div class="reel-clip-inspector-header">
                         <div>
                             <p class="reel-clip-inspector-kicker">Properties</p>
@@ -979,9 +1178,9 @@
                     </div>
                 </aside>
 
-                <!-- Step R3: Caption Pass -->
-                <section class="step disabled" id="reel-step-3">
-                    <h2><span class="step-num">3</span> Caption Pass</h2>
+                <!-- Step R3: Shorts Polish -->
+                <section class="step disabled" id="reel-step-3" data-reel-panel="captions">
+                    <h2><span class="step-num">3</span> Shorts Polish</h2>
                     <div class="step-content">
                         <div id="reel-caption-runtime-card" class="reel-helper-card">
                             <div class="reel-helper-card-header">
@@ -990,12 +1189,56 @@
                                     <h4 id="reel-caption-runtime-heading">Captioning packages not checked yet</h4>
                                 </div>
                             </div>
-                            <p id="reel-caption-runtime-summary" class="settings-hint">Install the caption runtime here if Video Editor reports missing packages.</p>
+                            <p id="reel-caption-runtime-summary" class="settings-hint">Install the caption runtime here if the workflow reports missing packages.</p>
                             <div class="reel-streamer-actions">
                                 <button type="button" class="secondary-btn" id="reel-caption-runtime-install-btn" onclick="App.installCaptioningDeps(false)">Install faster-whisper + torch (1-click)</button>
                                 <button type="button" class="secondary-btn hidden" id="reel-caption-runtime-speaker-btn" onclick="App.installCaptioningDeps(true)">Install pyannote.audio (optional)</button>
                                 <button type="button" class="secondary-btn" onclick="App.openSettingsPanel('dependency-settings-panel', 'reel-step-3')">Open Dependency Setup</button>
                             </div>
+                        </div>
+                        <div class="reel-helper-card reel-caption-command-card">
+                            <div class="reel-helper-card-header">
+                                <div>
+                                    <p class="reel-dock-kicker">Caption Pass</p>
+                                    <h4>Choose the pass and run it</h4>
+                                </div>
+                            </div>
+                            <div class="reel-menu-grid reel-caption-settings-grid">
+                                <label class="reel-menu-field">
+                                    <span class="reel-menu-field-label">Language</span>
+                                    <select id="reel-caption-language" class="settings-select toolbar-select">
+                                        <option value="">Auto-detect</option>
+                                        <option value="en" selected>English</option>
+                                        <option value="de">German</option>
+                                        <option value="es">Spanish</option>
+                                        <option value="fr">French</option>
+                                        <option value="ja">Japanese</option>
+                                        <option value="ko">Korean</option>
+                                        <option value="pt">Portuguese</option>
+                                        <option value="zh">Chinese</option>
+                                    </select>
+                                </label>
+                                <label class="reel-menu-field">
+                                    <span class="reel-menu-field-label">Whisper Model</span>
+                                    <select id="reel-whisper-model" class="settings-select toolbar-select"
+                                        title="Smaller = faster. Larger = more accurate. Large v3 recommended for streams.">
+                                        <option value="tiny">Tiny (fastest, ~32x RT)</option>
+                                        <option value="base">Base (~20x RT)</option>
+                                        <option value="small">Small (~8x RT)</option>
+                                        <option value="medium">Medium (~4x RT)</option>
+                                        <option value="large-v3" selected>Large v3 (~1x RT, best)</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="reel-streamer-actions">
+                                <button id="reel-transcribe-btn" type="button" class="secondary-btn" onclick="ReelMaker.transcribe()" disabled>Run Caption Pass</button>
+                                <button type="button" class="secondary-btn" onclick="ReelMaker.downloadAllClips()">Download &amp; Stitch</button>
+                                <label class="toolbar-checkbox-label"
+                                    title="Start transcription automatically after clips finish downloading">
+                                    <input type="checkbox" id="reel-auto-transcribe"> Auto run after stitch
+                                </label>
+                            </div>
+                            <p class="settings-hint">The caption pass runs on the stitched short sequence. Set the model here, then refine the transcript and style below.</p>
                         </div>
                         <div id="reel-transcribe-controls">
                             <div id="reel-hf-token-section">
@@ -1116,9 +1359,9 @@
                     </div>
                 </section>
 
-                <!-- Step R4: Build & Deliver -->
-                <section class="step disabled" id="reel-step-4">
-                    <h2><span class="step-num">4</span> Build &amp; Deliver</h2>
+                <!-- Step R4: Longform & Output -->
+                <section class="step disabled" id="reel-step-4" data-reel-panel="output">
+                    <h2><span class="step-num">4</span> Longform &amp; Output</h2>
                     <div class="step-content">
                         <div class="reel-helper-card">
                             <div class="reel-helper-card-header">
@@ -1145,7 +1388,7 @@
                                 <button type="button" class="secondary-btn" onclick="ReelMaker.dismissLongformHandoff()">Keep Editing Current Project</button>
                             </div>
                         </div>
-                        <p class="settings-hint">Render the current project as an MP4 using the selected format preset above. Pick Shorts/Reels, 4:5 feed, square, or 16:9 landscape. Use <strong>Burn Captions</strong> in the toolbar to control whether captions are baked in, or export clean and use the <strong>↓ SRT</strong> / <strong>↓ ASS</strong> files separately.</p>
+                        <p class="settings-hint">Render the current project as an MP4 using the selected format preset below. Pick Shorts/Reels, 4:5 feed, square, or 16:9 landscape. Use <strong>Burn Captions</strong> here to control whether captions are baked in, or export clean and use the <strong>↓ SRT</strong> / <strong>↓ ASS</strong> files separately.</p>
                         <div class="reel-helper-card">
                             <div class="reel-helper-card-header">
                                 <div>
@@ -1192,10 +1435,12 @@
 
         <div class="reel-statusbar">
             <span id="reel-status-project">No project loaded</span>
+            <span id="reel-status-workspace">Session workspace</span>
             <span id="reel-status-selection">No clip selected</span>
             <span id="reel-status-preview">Clip preview</span>
             <span id="reel-status-format">1080x1920 MP4</span>
             <span id="reel-status-runtime">0 clips</span>
+            <span id="reel-status-activity">Ready</span>
         </div>
     </main>
 
@@ -1210,36 +1455,138 @@
         </p>
     </footer>
 
+    <main class="film-layout hidden" id="film-workflow">
+        <div class="film-panel">
+            <section class="workflow-step">
+                <h2 class="step-label">1. Select Photo</h2>
+                <div id="film-drop-zone" class="film-drop-zone">
+                    <label for="film-file-input" class="film-drop-label">
+                        <span id="film-file-label">Drop a photo here or click to browse</span>
+                        <span class="film-drop-hint">JPG · PNG · TIFF · ARW · CR2 · CR3 · NEF · RAF · DNG</span>
+                    </label>
+                    <input type="file" id="film-file-input"
+                           accept=".jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp,.arw,.cr2,.cr3,.nef,.orf,.raf,.dng,.rw2,.pef"
+                           class="hidden">
+                </div>
+            </section>
+
+            <section class="workflow-step">
+                <h2 class="step-label">2. Preset</h2>
+                <div class="film-preset-row">
+                    <select id="film-preset-select" class="film-select"></select>
+                    <button type="button" class="secondary-btn" id="film-preset-save-btn">Save</button>
+                    <button type="button" class="secondary-btn" id="film-preset-delete-btn" disabled>Delete</button>
+                </div>
+            </section>
+
+            <section class="workflow-step">
+                <h2 class="step-label">3. Adjust</h2>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Film Grade</span>
+                        <span class="film-slider-value" id="film-grade-strength-val">—</span>
+                    </div>
+                    <input type="range" id="film-grade-strength" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Exposure</span>
+                        <span class="film-slider-value" id="film-exposure-bias-val">—</span>
+                    </div>
+                    <input type="range" id="film-exposure-bias" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Contrast</span>
+                        <span class="film-slider-value" id="film-contrast-strength-val">—</span>
+                    </div>
+                    <input type="range" id="film-contrast-strength" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Grain Intensity</span>
+                        <span class="film-slider-value" id="film-grain-intensity-val">—</span>
+                    </div>
+                    <input type="range" id="film-grain-intensity" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Grain Size</span>
+                        <span class="film-slider-value" id="film-grain-size-val">—</span>
+                    </div>
+                    <input type="range" id="film-grain-size" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Halation Intensity</span>
+                        <span class="film-slider-value" id="film-halation-intensity-val">—</span>
+                    </div>
+                    <input type="range" id="film-halation-intensity" class="film-slider">
+                </div>
+
+                <div class="film-slider-group">
+                    <div class="film-slider-header">
+                        <span class="film-slider-label">Halation Radius</span>
+                        <span class="film-slider-value" id="film-halation-radius-val">—</span>
+                    </div>
+                    <input type="range" id="film-halation-radius" class="film-slider">
+                </div>
+            </section>
+
+            <section class="workflow-step">
+                <button type="button" class="primary-btn" id="film-process-btn" disabled
+                        onclick="FilmLab.processPhoto()">Process &amp; Download</button>
+                <p id="film-status" class="settings-hint"></p>
+            </section>
+        </div>
+    </main>
+
     <script src="/static/js/crop.js"></script>
     <script src="/static/js/app.js"></script>
     <script src="/static/js/auth.js"></script>
     <script src="/static/js/reel.js"></script>
     <script src="/static/js/caption-editor.js"></script>
+    <script src="/static/js/film.js"></script>
     <script>
         function switchMode(mode) {
             const alertWorkflow = document.getElementById('alert-workflow');
             const reelWorkflow = document.getElementById('reel-workflow');
+            const filmWorkflow = document.getElementById('film-workflow');
             const alertBtn = document.getElementById('mode-alert-btn');
             const reelBtn = document.getElementById('mode-reel-btn');
+            const filmBtn = document.getElementById('mode-film-btn');
             if (window.location.hash !== `#${mode}`) {
                 window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}#${mode}`);
             }
+            alertWorkflow.classList.add('hidden');
+            reelWorkflow.classList.add('hidden');
+            filmWorkflow.classList.add('hidden');
+            alertBtn.classList.remove('active');
+            reelBtn.classList.remove('active');
+            filmBtn.classList.remove('active');
             if (mode === 'reel') {
-                alertWorkflow.classList.add('hidden');
                 reelWorkflow.classList.remove('hidden');
-                alertBtn.classList.remove('active');
                 reelBtn.classList.add('active');
+            } else if (mode === 'film') {
+                filmWorkflow.classList.remove('hidden');
+                filmBtn.classList.add('active');
+                FilmLab.init();
             } else {
-                reelWorkflow.classList.add('hidden');
                 alertWorkflow.classList.remove('hidden');
-                reelBtn.classList.remove('active');
                 alertBtn.classList.add('active');
             }
             App.checkOnboardingForMode(mode);
         }
 
-        const initialMode = window.location.hash.replace(/^#/, "");
-        if (initialMode === "reel" || initialMode === "alert") {
+        const initialUrl = new URL(window.location.href);
+        const initialMode = window.location.hash.replace(/^#/, "") || initialUrl.searchParams.get("mode") || "";
+        if (initialMode === "reel" || initialMode === "alert" || initialMode === "film") {
             switchMode(initialMode);
         }
     </script>
