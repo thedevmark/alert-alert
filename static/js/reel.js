@@ -53,6 +53,44 @@ const ReelMaker = (() => {
         height: 0.24,
         anchor: "top_right",
     };
+    const DEFAULT_WORKSPACE_ID = "session";
+    const WORKSPACE_CONFIGS = {
+        session: {
+            label: "Session",
+            focusPanel: "session",
+            panels: ["project-browser", "project-files", "monitor", "session"],
+        },
+        inbox: {
+            label: "Inbox",
+            focusPanel: "inbox",
+            panels: ["project-browser", "project-files", "monitor", "inbox", "inspector"],
+        },
+        inspector: {
+            label: "Inspector",
+            focusPanel: "inspector",
+            panels: ["project-browser", "monitor", "inbox", "inspector"],
+        },
+        captions: {
+            label: "Captions",
+            focusPanel: "captions",
+            panels: ["project-browser", "project-files", "monitor", "captions"],
+        },
+        output: {
+            label: "Output",
+            focusPanel: "output",
+            panels: ["project-browser", "project-files", "monitor", "output"],
+        },
+    };
+    const PANEL_WORKSPACE_MAP = {
+        "project-browser": "session",
+        "project-files": "session",
+        monitor: "inbox",
+        session: "session",
+        inbox: "inbox",
+        inspector: "inspector",
+        captions: "captions",
+        output: "output",
+    };
 
     // ── State ──────────────────────────────────────────────────────
     let projectId = "";
@@ -85,6 +123,17 @@ const ReelMaker = (() => {
     let derivedFromProjectId = "";
     let pendingLongformProject = null;
     let dependencySnapshot = null;
+    let openMenuName = "";
+    let activeWorkspaceId = DEFAULT_WORKSPACE_ID;
+    let activePanelId = WORKSPACE_CONFIGS[DEFAULT_WORKSPACE_ID].focusPanel;
+    let workspacePanelOverrides = {};
+    let activeTask = null;
+    let lastOperationMessage = "";
+    let lastOperationSource = "Workflow";
+    let lastOperationTone = "info";
+    let editorSummaryPublishTimer = null;
+    let lastPublishedEditorSummaryKey = "";
+    let importedEditorFeedIds = new Set();
 
     // ── Helpers ────────────────────────────────────────────────────
 
@@ -97,6 +146,88 @@ const ReelMaker = (() => {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+
+    function getWorkspaceConfig(workspaceId = activeWorkspaceId) {
+        return WORKSPACE_CONFIGS[workspaceId] || WORKSPACE_CONFIGS[DEFAULT_WORKSPACE_ID];
+    }
+
+    function getWorkspaceLabel(workspaceId = activeWorkspaceId) {
+        return getWorkspaceConfig(workspaceId).label;
+    }
+
+    function getPanelElement(panelId) {
+        return document.querySelector(`[data-reel-panel="${panelId}"]`);
+    }
+
+    function getWorkspaceOverrides(workspaceId = activeWorkspaceId) {
+        if (!workspacePanelOverrides[workspaceId]) {
+            workspacePanelOverrides[workspaceId] = {};
+        }
+        return workspacePanelOverrides[workspaceId];
+    }
+
+    function isPanelVisible(panelId, workspaceId = activeWorkspaceId) {
+        const overrides = getWorkspaceOverrides(workspaceId);
+        if (Object.prototype.hasOwnProperty.call(overrides, panelId)) {
+            return Boolean(overrides[panelId]);
+        }
+        return getWorkspaceConfig(workspaceId).panels.includes(panelId);
+    }
+
+    function applyOperationRail(message, options = {}) {
+        const { source = "Workflow", tone = "info" } = options;
+        const rail = $("reel-operation-rail");
+        const pill = $("reel-operation-pill");
+        const text = $("reel-operation-text");
+        if (!rail || !pill || !text) return;
+        if (!message) {
+            hide(rail);
+            return;
+        }
+
+        rail.classList.remove("error", "success", "info");
+        rail.classList.add(tone);
+        pill.textContent = source;
+        text.textContent = message;
+        show(rail);
+    }
+
+    function renderWorkspaceControls() {
+        const workflow = $("reel-workflow");
+        if (workflow) {
+            workflow.dataset.reelWorkspace = activeWorkspaceId;
+        }
+        document.querySelectorAll(".reel-workspace-btn").forEach((btn) => {
+            const workspaceId = btn.dataset.reelWorkspace || "";
+            const isActive = workspaceId === activeWorkspaceId;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+        document.querySelectorAll("[data-reel-panel]").forEach((panel) => {
+            const panelId = panel.dataset.reelPanel || "";
+            const visible = isPanelVisible(panelId);
+            panel.classList.toggle("reel-panel-collapsed", !visible);
+            panel.classList.toggle("reel-panel-active", panelId === activePanelId);
+        });
+        document.querySelectorAll(".reel-panel-toggle[data-reel-panel-toggle]").forEach((btn) => {
+            const panelId = btn.dataset.reelPanelToggle || "";
+            const active = isPanelVisible(panelId);
+            btn.classList.toggle("active", active);
+            btn.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+    }
+
+    function renderActivityStatus() {
+        const statusActivity = $("reel-status-activity");
+        if (!statusActivity) return;
+
+        const hasStoredMessage = Boolean(lastOperationMessage);
+        const source = activeTask?.source || (hasStoredMessage ? lastOperationSource : "");
+        const message = activeTask?.message || lastOperationMessage || "Ready";
+        const tone = activeTask?.tone || lastOperationTone || "info";
+        statusActivity.textContent = source ? `${source} · ${message}` : message;
+        statusActivity.dataset.tone = tone;
+    }
 
     function showError(stepId, msg) {
         const el = $(stepId);
@@ -114,32 +245,201 @@ const ReelMaker = (() => {
     function mapStepIdToRailSource(stepId = "") {
         const normalized = String(stepId || "").trim();
         if (normalized === "reel-step1-error") return "Session";
-        if (normalized === "reel-step2-error") return "Edit";
-        if (normalized === "reel-step3-error") return "Captions";
-        if (normalized === "reel-step4-error") return "Deliver";
-        return "Video Editor";
+        if (normalized === "reel-step2-error") return "Inbox";
+        if (normalized === "reel-step3-error") return "Shorts";
+        if (normalized === "reel-step4-error") return "Output";
+        return "Workflow";
     }
 
     function setOperationRail(message, options = {}) {
-        const { source = "Video Editor", tone = "info" } = options;
-        const rail = $("reel-operation-rail");
-        const pill = $("reel-operation-pill");
-        const text = $("reel-operation-text");
-        if (!rail || !pill || !text) return;
+        const { source = "Workflow", tone = "info" } = options;
         if (!message) {
-            hide(rail);
+            clearOperationRail();
             return;
         }
-
-        rail.classList.remove("error", "success", "info");
-        rail.classList.add(tone);
-        pill.textContent = source;
-        text.textContent = message;
-        show(rail);
+        lastOperationMessage = message;
+        lastOperationSource = source;
+        lastOperationTone = tone;
+        applyOperationRail(message, { source, tone });
+        renderActivityStatus();
     }
 
     function clearOperationRail() {
-        hide("reel-operation-rail");
+        lastOperationMessage = "";
+        lastOperationSource = "Workflow";
+        lastOperationTone = "info";
+        if (activeTask?.message) {
+            applyOperationRail(activeTask.message, {
+                source: activeTask.source,
+                tone: activeTask.tone,
+            });
+        } else {
+            hide("reel-operation-rail");
+        }
+        renderActivityStatus();
+    }
+
+    function setActiveTask(message, options = {}) {
+        if (!message) {
+            clearActiveTask();
+            return;
+        }
+        const { source = "Workflow", tone = "info" } = options;
+        activeTask = { source, tone, message };
+        applyOperationRail(message, { source, tone });
+        renderActivityStatus();
+    }
+
+    function clearActiveTask(options = {}) {
+        const { message = "", source = "Workflow", tone = "info" } = options;
+        activeTask = null;
+        if (message) {
+            setOperationRail(message, { source, tone });
+            return;
+        }
+        if (lastOperationMessage) {
+            applyOperationRail(lastOperationMessage, {
+                source: lastOperationSource,
+                tone: lastOperationTone,
+            });
+        } else {
+            hide("reel-operation-rail");
+        }
+        renderActivityStatus();
+    }
+
+    function getMenuTrigger(menuName) {
+        return $(`reel-menu-${menuName}-btn`);
+    }
+
+    function getMenuPanel(menuName) {
+        return $(`reel-menu-${menuName}-panel`);
+    }
+
+    function syncMenuState() {
+        document.querySelectorAll(".reel-menu-trigger").forEach((trigger) => {
+            const menuName = trigger.dataset.reelMenu || "";
+            const isOpen = Boolean(openMenuName) && menuName === openMenuName;
+            trigger.classList.toggle("active", isOpen);
+            trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        });
+        document.querySelectorAll(".reel-menu-panel").forEach((panel) => {
+            panel.classList.remove("open");
+        });
+        if (openMenuName) {
+            getMenuPanel(openMenuName)?.classList.add("open");
+        }
+    }
+
+    function closeMenus() {
+        if (!openMenuName) return;
+        openMenuName = "";
+        syncMenuState();
+    }
+
+    function openMenu(menuName) {
+        if (!menuName) return false;
+        if ($("reel-workflow")?.classList.contains("hidden")) return false;
+        openMenuName = menuName;
+        syncMenuState();
+        return true;
+    }
+
+    function toggleMenu(menuName) {
+        if (!menuName) return false;
+        if (openMenuName === menuName) {
+            closeMenus();
+            return false;
+        }
+        return openMenu(menuName);
+    }
+
+    function initChromeMenus() {
+        document.querySelectorAll(".reel-menu-trigger").forEach((trigger) => {
+            trigger.addEventListener("mouseenter", () => {
+                const menuName = trigger.dataset.reelMenu || "";
+                if (openMenuName && menuName && menuName !== openMenuName) {
+                    openMenu(menuName);
+                }
+            });
+        });
+        document.querySelectorAll(".reel-menu-panel").forEach((panel) => {
+            panel.addEventListener("click", (event) => {
+                const actionBtn = event.target.closest(".reel-menu-action");
+                if (actionBtn && !actionBtn.disabled) {
+                    window.setTimeout(closeMenus, 0);
+                }
+            });
+        });
+        document.addEventListener("click", (event) => {
+            if (!event.target.closest(".reel-menu-group")) {
+                closeMenus();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && openMenuName) {
+                closeMenus();
+            }
+        });
+        window.addEventListener("resize", closeMenus);
+        syncMenuState();
+    }
+
+    function ensurePanelVisible(panelId, options = {}) {
+        const { workspaceId = activeWorkspaceId } = options;
+        const panel = getPanelElement(panelId);
+        if (!panel) return null;
+        if (!isPanelVisible(panelId, workspaceId)) {
+            const overrides = getWorkspaceOverrides(workspaceId);
+            overrides[panelId] = true;
+        }
+        renderWorkspaceControls();
+        return panel;
+    }
+
+    function setWorkspace(workspaceId, options = {}) {
+        if (!WORKSPACE_CONFIGS[workspaceId]) return false;
+        const { scroll = true, focusPanelId = null } = options;
+        activeWorkspaceId = workspaceId;
+        activePanelId = focusPanelId || getWorkspaceConfig(workspaceId).focusPanel;
+        ensurePanelVisible(activePanelId, { workspaceId });
+        renderWorkspaceControls();
+        updateWorkspaceChrome();
+        if (scroll) {
+            getPanelElement(activePanelId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return true;
+    }
+
+    function focusPanel(panelId, options = {}) {
+        const { scroll = true, workspaceId = PANEL_WORKSPACE_MAP[panelId] || activeWorkspaceId } = options;
+        if (WORKSPACE_CONFIGS[workspaceId]) {
+            activeWorkspaceId = workspaceId;
+        }
+        activePanelId = panelId;
+        const panel = ensurePanelVisible(panelId);
+        renderWorkspaceControls();
+        updateWorkspaceChrome();
+        if (scroll && panel) {
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return Boolean(panel);
+    }
+
+    function toggleWorkspacePanel(panelId) {
+        const overrides = getWorkspaceOverrides();
+        overrides[panelId] = !isPanelVisible(panelId);
+        activePanelId = panelId;
+        renderWorkspaceControls();
+        updateWorkspaceChrome();
+        return Boolean(overrides[panelId]);
+    }
+
+    function resetWorkspacePanels() {
+        delete workspacePanelOverrides[activeWorkspaceId];
+        activePanelId = getWorkspaceConfig(activeWorkspaceId).focusPanel;
+        renderWorkspaceControls();
+        updateWorkspaceChrome();
     }
 
     function setSourceMomentStatus(message) {
@@ -365,6 +665,7 @@ const ReelMaker = (() => {
             video.load();
         }
         hide("reel-video-sidebar");
+        hide("reel-preview-composition-badge");
         renderPreviewTimelines();
     }
 
@@ -421,22 +722,420 @@ const ReelMaker = (() => {
         return `${flags.join(" · ")} · ${formatRelativeDate(project.updated_at)}`;
     }
 
+    function getActiveProjectMeta() {
+        return recentProjects.find((project) => project.project_id === projectId) || null;
+    }
+
+    function parseLaunchNumber(value) {
+        const parsed = Number.parseFloat(String(value ?? "").trim());
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function buildLaunchVodUrl(videoId, explicitVodUrl = "") {
+        const directUrl = String(explicitVodUrl || "").trim();
+        if (directUrl) return directUrl;
+        const cleanVideoId = String(videoId || "").trim();
+        return cleanVideoId ? `https://www.twitch.tv/videos/${cleanVideoId}` : "";
+    }
+
+    function readLaunchParams() {
+        const url = new URL(window.location.href);
+        const params = url.searchParams;
+        const videoId = String(params.get("video_id") || "").trim();
+        return {
+            candidateKind: String(params.get("candidate_kind") || "").trim().toLowerCase(),
+            candidateTitle: String(params.get("candidate_title") || "").trim(),
+            channelName: String(params.get("channel_name") || "").trim(),
+            clipId: String(params.get("clip_id") || "").trim(),
+            clipUrl: String(params.get("clip_url") || "").trim(),
+            createdAt: String(params.get("created_at") || "").trim(),
+            endSec: parseLaunchNumber(params.get("end_sec")),
+            openNow: params.get("open_now") === "1",
+            projectId: String(params.get("project_id") || "").trim(),
+            sessionLabel: String(params.get("session_label") || "").trim(),
+            startSec: parseLaunchNumber(params.get("start_sec")),
+            videoId,
+            viewCount: parseLaunchNumber(params.get("view_count")),
+            vodOffset: parseLaunchNumber(params.get("vod_offset")),
+            vodTitle: String(params.get("vod_title") || "").trim(),
+            vodUrl: buildLaunchVodUrl(videoId, params.get("vod_url")),
+        };
+    }
+
+    function consumeLaunchParams() {
+        const url = new URL(window.location.href);
+        [
+            "mode",
+            "open_now",
+            "project_id",
+            "channel_name",
+            "session_label",
+            "vod_title",
+            "vod_url",
+            "video_id",
+            "clip_id",
+            "clip_url",
+            "created_at",
+            "view_count",
+            "vod_offset",
+            "candidate_kind",
+            "candidate_title",
+            "start_sec",
+            "end_sec",
+        ].forEach((key) => url.searchParams.delete(key));
+        window.history.replaceState({}, "", url.toString());
+    }
+
+    function pickLatestSourceMoment(moments = []) {
+        return [...(Array.isArray(moments) ? moments : [])]
+            .filter(Boolean)
+            .sort((left, right) => {
+                const leftCreated = Date.parse(left?.created_at || "");
+                const rightCreated = Date.parse(right?.created_at || "");
+                const leftHasCreated = Number.isFinite(leftCreated);
+                const rightHasCreated = Number.isFinite(rightCreated);
+                if (leftHasCreated && rightHasCreated && leftCreated !== rightCreated) {
+                    return rightCreated - leftCreated;
+                }
+                if (rightHasCreated && !leftHasCreated) return 1;
+                if (leftHasCreated && !rightHasCreated) return -1;
+
+                const rightEnd = Number(right?.end_sec || 0);
+                const leftEnd = Number(left?.end_sec || 0);
+                if (rightEnd !== leftEnd) return rightEnd - leftEnd;
+
+                return Number(right?.score || 0) - Number(left?.score || 0);
+            })[0] || null;
+    }
+
+    function buildEditorSummaryCandidate(moment) {
+        if (!moment) return null;
+        const rawKind = String(moment.kind || moment.source_kind || "").trim().toLowerCase();
+        const kind = ["twitch_clip", "stream_marker", "chat_bookmark", "music_event", "source_moment"].includes(rawKind)
+            ? rawKind
+            : "source_moment";
+        return {
+            clipId: String(moment.clip_id || "").trim() || null,
+            clipUrl: String(moment.clip_url || "").trim() || null,
+            createdAt: String(moment.created_at || "").trim() || null,
+            endSec: Number(moment.end_sec || 0),
+            kind,
+            startSec: Number(moment.start_sec || 0),
+            title: String(moment.title || "Untitled moment").trim() || "Untitled moment",
+            videoId: String(moment.video_id || "").trim() || null,
+            viewCount: Number.isFinite(Number(moment.view_count)) ? Number(moment.view_count) : null,
+            vodOffset: Number.isFinite(Number(moment.vod_offset)) ? Number(moment.vod_offset) : null,
+        };
+    }
+
+    function buildEmptyEditorSummary() {
+        return {
+            channelName: null,
+            clipCount: 0,
+            latestCandidate: null,
+            localAppUrl: window.location.origin,
+            projectId: null,
+            sessionLabel: null,
+            shortReadyCount: 0,
+            sourceMomentCount: 0,
+            updatedAt: new Date().toISOString(),
+            vodTitle: null,
+            vodUrl: null,
+        };
+    }
+
+    function buildCurrentEditorSummary(options = {}) {
+        if (options.clear) {
+            return buildEmptyEditorSummary();
+        }
+
+        const projectMeta = options.projectMeta || getActiveProjectMeta() || {};
+        const session = options.session || collectSessionDetails();
+        const moments = Array.isArray(options.sourceMoments) ? options.sourceMoments : sourceMoments;
+        const latestCandidate = buildEditorSummaryCandidate(
+            options.latestCandidate || pickLatestSourceMoment(moments),
+        );
+        const vodTitleLabel = String($("reel-vod-title")?.textContent || "").trim();
+
+        return {
+            channelName: options.channelName ?? session.channel_name ?? projectMeta.stream_session?.channel_name ?? null,
+            clipCount: Number(options.clipCount ?? projectMeta.clip_count ?? getClipRows().length ?? 0),
+            latestCandidate,
+            localAppUrl: window.location.origin,
+            projectId: options.projectId ?? projectId ?? null,
+            sessionLabel: options.sessionLabel ?? session.session_label ?? projectMeta.stream_session?.session_label ?? null,
+            shortReadyCount: Number(options.shortReadyCount ?? projectMeta.short_ready_count ?? 0),
+            sourceMomentCount: Number(options.sourceMomentCount ?? moments.length ?? 0),
+            updatedAt: new Date().toISOString(),
+            vodTitle: options.vodTitle ?? vodTitleLabel ?? projectMeta.title ?? null,
+            vodUrl: options.vodUrl ?? vodUrl ?? null,
+        };
+    }
+
+    async function publishEditorSummary(options = {}) {
+        if (typeof DmAuth === "undefined" || typeof DmAuth.updateEditorSummary !== "function") {
+            return null;
+        }
+
+        const authState = typeof DmAuth.getState === "function" ? DmAuth.getState() : null;
+        if (!authState?.user) {
+            return null;
+        }
+
+        const summary = buildCurrentEditorSummary(options);
+        const payloadKey = JSON.stringify(summary);
+        if (!options.force && payloadKey === lastPublishedEditorSummaryKey) {
+            return summary;
+        }
+
+        try {
+            await DmAuth.updateEditorSummary(summary);
+            lastPublishedEditorSummaryKey = payloadKey;
+            return summary;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function queueEditorSummaryPublish(options = {}) {
+        if (editorSummaryPublishTimer) {
+            window.clearTimeout(editorSummaryPublishTimer);
+        }
+
+        editorSummaryPublishTimer = window.setTimeout(() => {
+            editorSummaryPublishTimer = null;
+            void publishEditorSummary(options);
+        }, Number(options.delayMs || 180));
+    }
+
+    function extractVideoIdFromVodUrl(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        const match = raw.match(/twitch\.tv\/videos\/(\d+)/i);
+        return match ? String(match[1] || "").trim() : "";
+    }
+
+    function buildEditorFeedProjectContext() {
+        const projectMeta = getActiveProjectMeta() || {};
+        const session = collectSessionDetails();
+        const activeVodUrl = String(vodUrl || projectMeta.vod_url || "").trim();
+        return {
+            channelName: String(session.channel_name || projectMeta.stream_session?.channel_name || "").trim(),
+            projectId: String(projectId || "").trim(),
+            sessionLabel: String(session.session_label || projectMeta.stream_session?.session_label || "").trim(),
+            videoId: extractVideoIdFromVodUrl(activeVodUrl),
+            vodUrl: activeVodUrl,
+        };
+    }
+
+    function matchesEditorFeedItemToProject(item, context) {
+        if (!item || typeof item !== "object") {
+            return false;
+        }
+
+        const itemId = String(item.id || "").trim();
+        if (itemId && importedEditorFeedIds.has(itemId)) {
+            return false;
+        }
+
+        const itemProjectId = String(item.projectId || item.project_id || "").trim();
+        if (itemProjectId && context.projectId) {
+            return itemProjectId === context.projectId;
+        }
+
+        const itemVideoId = String(item.videoId || item.video_id || "").trim();
+        if (itemVideoId && context.videoId) {
+            return itemVideoId === context.videoId;
+        }
+
+        const itemVodUrl = String(item.vodUrl || item.vod_url || "").trim();
+        if (itemVodUrl && context.vodUrl) {
+            return itemVodUrl === context.vodUrl;
+        }
+
+        const itemSessionLabel = String(item.sessionLabel || item.session_label || "").trim().toLowerCase();
+        const contextSessionLabel = String(context.sessionLabel || "").trim().toLowerCase();
+        if (itemSessionLabel && contextSessionLabel && itemSessionLabel === contextSessionLabel) {
+            const itemChannelName = String(item.channelName || item.channel_name || "").trim().toLowerCase();
+            const contextChannelName = String(context.channelName || "").trim().toLowerCase();
+            return !itemChannelName || !contextChannelName || itemChannelName === contextChannelName;
+        }
+
+        return false;
+    }
+
+    async function syncEditorFeedIntoProject(options = {}) {
+        const { quiet = false } = options;
+        if (!projectId || typeof DmAuth === "undefined" || typeof DmAuth.fetchEditorFeed !== "function") {
+            return null;
+        }
+
+        const authState = typeof DmAuth.getState === "function" ? DmAuth.getState() : null;
+        if (!authState?.user) {
+            return null;
+        }
+
+        const context = buildEditorFeedProjectContext();
+        if (!context.projectId && !context.videoId && !context.vodUrl && !context.sessionLabel) {
+            return null;
+        }
+
+        try {
+            const data = await DmAuth.fetchEditorFeed();
+            const feedItems = Array.isArray(data?.items) ? data.items : [];
+            const matchingItems = feedItems.filter((item) => matchesEditorFeedItemToProject(item, context));
+            if (!matchingItems.length) {
+                return null;
+            }
+
+            const importData = await api("/api/reel/import-editor-feed", {
+                method: "POST",
+                body: JSON.stringify({
+                    items: matchingItems,
+                    project_id: projectId,
+                }),
+            });
+
+            if (importData.error) {
+                if (!quiet) {
+                    setOperationRail(importData.error, { source: "Toolkit", tone: "error" });
+                }
+                return null;
+            }
+
+            if (Array.isArray(importData.moments)) {
+                sourceMoments = importData.moments;
+            }
+
+            connectedTwitchClips = sourceMoments.filter((moment) => String(moment?.kind || "").toLowerCase() === "twitch_clip");
+            renderConnectedTwitchClips(connectedTwitchClips);
+
+            const currentIds = new Set(getClipRows().map((row) => row.dataset.clipId));
+            (importData.imported_clips || []).forEach((clip) => {
+                if (!currentIds.has(clip.id)) {
+                    renderClipItem(clip);
+                    currentIds.add(clip.id);
+                }
+            });
+
+            if ((importData.imported_count || 0) > 0) {
+                const importedIds = Array.isArray(importData.imported_feed_ids) ? importData.imported_feed_ids : [];
+                importedIds.forEach((id) => {
+                    if (id) importedEditorFeedIds.add(String(id));
+                });
+
+                if (getClipRows().length > 0) {
+                    enableStep(2);
+                    show("reel-clip-actions");
+                }
+
+                const summary = summarizeSourceMoments(sourceMoments).slice(0, 3).join(" · ");
+                setSessionInboxStatus(summary ? `${sourceMoments.length} session moments ready. ${summary}.` : `${sourceMoments.length} session moments ready.`);
+                await Promise.all(importedIds.map(async (id) => {
+                    if (!id || typeof DmAuth.deleteEditorFeed !== "function") return;
+                    try {
+                        await DmAuth.deleteEditorFeed(id);
+                    } catch (error) {
+                        // Keep imported ids marked locally even if remote queue cleanup fails.
+                    }
+                }));
+                await loadRecentProjects();
+                await loadProjectAssets();
+                updateToolbarState();
+                if (!quiet) {
+                    setOperationRail(importData.message || "Imported mirrored editor feed items into this project.", {
+                        source: "Toolkit",
+                        tone: "success",
+                    });
+                }
+            }
+
+            return importData;
+        } catch (error) {
+            if (!quiet) {
+                setOperationRail(error?.message || "Failed to sync editor feed.", {
+                    source: "Toolkit",
+                    tone: "error",
+                });
+            }
+            return null;
+        }
+    }
+
+    function applyLaunchSessionDetails(params) {
+        if ($("reel-session-platform")) $("reel-session-platform").value = "twitch";
+        if ($("reel-session-channel") && params.channelName) $("reel-session-channel").value = params.channelName;
+        if ($("reel-session-label") && params.sessionLabel) $("reel-session-label").value = params.sessionLabel;
+    }
+
+    function selectClipForMoment(moment) {
+        const targetRow = getClipRowForMoment({
+            end_sec: moment?.endSec ?? moment?.end_sec ?? 0,
+            source_kind: moment?.kind || moment?.source_kind || "",
+            start_sec: moment?.startSec ?? moment?.start_sec ?? 0,
+        });
+        if (!targetRow) return false;
+
+        setActiveClip(targetRow.dataset.clipId || "");
+        setWorkspace("inbox", { scroll: false, focusPanelId: "inspector" });
+        targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+        return true;
+    }
+
+    function focusStep(stepNumber) {
+        const workspaceByStep = {
+            1: "session",
+            2: "inbox",
+            3: "captions",
+            4: "output",
+        };
+        const panelByStep = {
+            1: "session",
+            2: "inbox",
+            3: "captions",
+            4: "output",
+        };
+        const step = $(`reel-step-${stepNumber}`);
+        if (!step) return false;
+        const workspaceId = workspaceByStep[stepNumber];
+        const panelId = panelByStep[stepNumber];
+        if (workspaceId) {
+            setWorkspace(workspaceId, { scroll: false, focusPanelId: panelId });
+        }
+        step.scrollIntoView({ behavior: "smooth", block: "start" });
+        return true;
+    }
+
     function setStreamerStatus(message, options = {}) {
         const { error = false } = options;
         const el = $("reel-streamer-status");
         if (!el) return;
-        el.textContent = message || "Paste hotkey/marker timestamps after loading the stream VOD to turn them into starter clips.";
+        const fallback = "Paste hotkey/marker timestamps after loading the stream VOD to turn them into starter clips.";
+        el.textContent = message || fallback;
         el.classList.toggle("error-msg", Boolean(error));
         el.classList.toggle("settings-hint", !error);
+        if (message && message !== fallback) {
+            setOperationRail(message, {
+                source: "Session",
+                tone: error ? "error" : "info",
+            });
+        }
     }
 
     function setSessionInboxStatus(message, options = {}) {
         const { error = false } = options;
         const el = $("reel-session-inbox-status");
         if (!el) return;
-        el.textContent = message || "Load a VOD and import Twitch clips, markers, or chapters to build this session inbox.";
+        const fallback = "Load a VOD and import Twitch clips, markers, or chapters to build this session inbox.";
+        el.textContent = message || fallback;
         el.classList.toggle("error-msg", Boolean(error));
         el.classList.toggle("settings-hint", !error);
+        if (message && message !== fallback) {
+            setOperationRail(message, {
+                source: "Inbox",
+                tone: error ? "error" : "info",
+            });
+        }
     }
 
     function renderCaptionRuntimeCard(deps = dependencySnapshot) {
@@ -454,10 +1153,12 @@ const ReelMaker = (() => {
         const requiredReady = Boolean(captioning.faster_whisper?.installed) && Boolean(captioning.torch?.installed);
         const pyannoteMissing = optionalMissing.includes("pyannote_audio");
         const busy = installState.status === "installing";
+        const installMessage = String(installState.message || "");
+        const installingPyannote = busy && /pyannote\.audio/i.test(installMessage);
 
         if (!dependencySnapshot) {
             heading.textContent = "Checking caption runtime...";
-            summary.textContent = "Video Editor is checking whether the captioning packages are ready.";
+            summary.textContent = "The workflow is checking whether the captioning packages are ready.";
             installBtn.disabled = true;
             speakerBtn.disabled = true;
             hide(speakerBtn);
@@ -465,8 +1166,13 @@ const ReelMaker = (() => {
         }
 
         if (busy) {
-            heading.textContent = "Installing caption runtime...";
-            summary.textContent = installState.message || "Installing faster-whisper and torch. Keep the app open.";
+            if (installingPyannote) {
+                heading.textContent = "Installing speaker labeling...";
+                summary.textContent = installMessage || "Installing pyannote.audio for optional speaker labels. Keep the app open.";
+            } else {
+                heading.textContent = "Installing caption runtime...";
+                summary.textContent = installMessage || "Installing faster-whisper and torch. Keep the app open.";
+            }
         } else if (requiredReady) {
             heading.textContent = "Caption runtime is ready";
             summary.textContent = pyannoteMissing
@@ -480,11 +1186,15 @@ const ReelMaker = (() => {
 
         installBtn.disabled = busy;
         installBtn.classList.toggle("hidden", requiredReady);
-        installBtn.textContent = busy ? "Installing caption runtime..." : "Install faster-whisper + torch (1-click)";
+        installBtn.textContent = busy && !installingPyannote
+            ? "Installing caption runtime..."
+            : "Install faster-whisper + torch (1-click)";
 
         speakerBtn.disabled = busy;
         speakerBtn.classList.toggle("hidden", !requiredReady || !pyannoteMissing);
-        if (!busy) {
+        if (busy && installingPyannote) {
+            speakerBtn.textContent = "Installing pyannote.audio...";
+        } else if (!busy) {
             speakerBtn.textContent = "Install pyannote.audio (optional)";
         }
     }
@@ -946,9 +1656,14 @@ const ReelMaker = (() => {
     function renderFacecamGuide() {
         const guide = $("reel-facecam-guide");
         if (!guide) return;
+        const label = guide.querySelector(".reel-facecam-guide-label");
+        const handle = $("reel-facecam-guide-handle");
 
         const metrics = getPreviewVideoMetrics();
-        if (!facecamLayout.enabled || !metrics || previewMode !== "source") {
+        const composition = getEffectiveCompositionState();
+        const showInOutput = previewMode === "sequence" && composition.key === "facecam_top";
+        const editable = previewMode === "source";
+        if (!facecamLayout.enabled || !metrics || (!editable && !showInOutput)) {
             hide(guide);
             return;
         }
@@ -957,7 +1672,37 @@ const ReelMaker = (() => {
         guide.style.top = `${metrics.top + (metrics.height * facecamLayout.y)}px`;
         guide.style.width = `${metrics.width * facecamLayout.width}px`;
         guide.style.height = `${metrics.height * facecamLayout.height}px`;
+        guide.classList.toggle("readonly", !editable);
+        if (label) {
+            label.textContent = editable ? "Facecam Guide" : "Output Facecam Zone";
+        }
+        if (handle) {
+            handle.classList.toggle("hidden", !editable);
+        }
         show(guide);
+    }
+
+    function renderPreviewCompositionBadge() {
+        const badge = $("reel-preview-composition-badge");
+        const title = $("reel-preview-composition-title");
+        const detail = $("reel-preview-composition-detail");
+        if (!badge || !title || !detail) return;
+
+        if (!projectId) {
+            hide(badge);
+            return;
+        }
+
+        const activePreset = getExportFormatConfig();
+        const composition = getEffectiveCompositionState();
+        const burnCaptions = $("reel-burn-captions")?.checked !== false;
+        title.textContent = previewMode === "sequence"
+            ? `${activePreset.label} output preview`
+            : `${composition.label} clip framing`;
+        detail.textContent = previewMode === "sequence"
+            ? `${composition.summary} · ${burnCaptions ? "captions baked in" : "clean export + subtitle files"}`
+            : composition.detail;
+        show(badge);
     }
 
     function setFacecamLayout(nextLayout, options = {}) {
@@ -966,6 +1711,7 @@ const ReelMaker = (() => {
         syncFacecamLayoutInputs();
         if (render) {
             renderFacecamGuide();
+            renderPreviewCompositionBadge();
             if (refreshToolbar) {
                 updateToolbarState();
             }
@@ -1015,7 +1761,7 @@ const ReelMaker = (() => {
     }
 
     function startFacecamGuideDrag(event, mode = "move") {
-        if (!facecamLayout.enabled) return;
+        if (!facecamLayout.enabled || previewMode !== "source") return;
         const metrics = getPreviewVideoMetrics();
         if (!metrics) return;
         facecamGuideDrag = {
@@ -1156,18 +1902,32 @@ const ReelMaker = (() => {
         const { error = false } = options;
         const el = $("reel-auth-vod-status");
         if (!el) return;
-        el.textContent = message || "Pull recent Twitch archives from the shared auth backend, then import markers from the selected VOD.";
+        const fallback = "Pull recent Twitch archives from the shared auth backend, then import markers from the selected VOD.";
+        el.textContent = message || fallback;
         el.classList.toggle("error-msg", Boolean(error));
         el.classList.toggle("settings-hint", !error);
+        if (message && message !== fallback) {
+            setOperationRail(message, {
+                source: "Twitch VODs",
+                tone: error ? "error" : "info",
+            });
+        }
     }
 
     function setConnectedClipStatus(message, options = {}) {
         const { error = false } = options;
         const el = $("reel-auth-clip-status");
         if (!el) return;
-        el.textContent = message || "Fetch Twitch clips that viewers already cut from this stream, then import them as editable starter clips.";
+        const fallback = "Fetch Twitch clips that viewers already cut from this stream, then import them as editable starter clips.";
+        el.textContent = message || fallback;
         el.classList.toggle("error-msg", Boolean(error));
         el.classList.toggle("settings-hint", !error);
+        if (message && message !== fallback) {
+            setOperationRail(message, {
+                source: "Twitch Clips",
+                tone: error ? "error" : "info",
+            });
+        }
     }
 
     function formatConnectedVodDate(value) {
@@ -1418,6 +2178,8 @@ const ReelMaker = (() => {
             btn.disabled = true;
             btn.textContent = "Loading...";
         }
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Refreshing recent Twitch VODs...", { source: "Ingest" });
 
         try {
             const data = await DmAuth.fetchTwitchVideos({
@@ -1433,6 +2195,7 @@ const ReelMaker = (() => {
                 ...authState,
                 isLoading: false,
             });
+            clearActiveTask();
             if (connectedTwitchVideos.length > 0) {
                 if (!quiet) {
                     setConnectedVodStatus(`Loaded ${connectedTwitchVideos.length} recent Twitch VOD${connectedTwitchVideos.length === 1 ? "" : "s"}.`);
@@ -1449,6 +2212,7 @@ const ReelMaker = (() => {
             renderConnectedTwitchVideos([]);
             renderConnectedTwitchClips([]);
             updateConnectedTwitchControls(authState);
+            clearActiveTask();
             setConnectedVodStatus(e.message || "Failed to load Twitch VODs.", { error: true });
             setConnectedClipStatus("Failed to load Twitch clips because the VOD list did not load.", { error: true });
             return [];
@@ -1473,6 +2237,8 @@ const ReelMaker = (() => {
             return null;
         }
 
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Loading the selected Twitch VOD into the session...", { source: "Ingest" });
         const vodLink = String(selected.url || "").trim() || `https://www.twitch.tv/videos/${selected.id}`;
         setSourceType("url");
         if ($("reel-url-input")) $("reel-url-input").value = vodLink;
@@ -1485,8 +2251,13 @@ const ReelMaker = (() => {
         }
 
         const loaded = await validateUrl();
+        if (loaded) {
+            clearActiveTask();
+        }
         if (loaded && !quiet) {
             setConnectedVodStatus(`Loaded Twitch VOD: ${selected.title || `Video ${selected.id}`}.`);
+        } else if (!loaded) {
+            clearActiveTask();
         }
         if (loaded && loadClips) {
             await loadConnectedTwitchClips({ quiet, selectedVod: selected });
@@ -1527,6 +2298,8 @@ const ReelMaker = (() => {
             btn.disabled = true;
             btn.textContent = "Loading...";
         }
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Fetching Twitch clips cut from this stream...", { source: "Inbox" });
 
         try {
             const data = await DmAuth.fetchTwitchClips({
@@ -1536,6 +2309,7 @@ const ReelMaker = (() => {
             connectedTwitchClips = Array.isArray(data?.clips) ? data.clips : [];
             renderConnectedTwitchClips(connectedTwitchClips);
             const importableCount = getImportableConnectedTwitchClips(targetVod).length;
+            clearActiveTask();
             if (!connectedTwitchClips.length) {
                 setConnectedClipStatus("No Twitch clips were found for the selected VOD.");
             } else if (!quiet) {
@@ -1549,6 +2323,7 @@ const ReelMaker = (() => {
         } catch (e) {
             connectedTwitchClips = [];
             renderConnectedTwitchClips([]);
+            clearActiveTask();
             setConnectedClipStatus(e.message || "Failed to load Twitch clips.", { error: true });
             return [];
         } finally {
@@ -1584,12 +2359,15 @@ const ReelMaker = (() => {
             btn.disabled = true;
             btn.textContent = "Importing...";
         }
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Importing Twitch markers into the session inbox...", { source: "Ingest" });
 
         try {
             if (!vodUrl || !String(vodUrl).includes(String(selected.id))) {
                 setConnectedVodStatus("Loading the selected VOD before importing markers...");
                 const loadedVod = await loadSelectedConnectedTwitchVod({ quiet: true });
                 if (!loadedVod) {
+                    clearActiveTask();
                     setConnectedVodStatus("The selected Twitch VOD could not be loaded into the editor.", { error: true });
                     return [];
                 }
@@ -1598,6 +2376,7 @@ const ReelMaker = (() => {
             const data = await DmAuth.fetchTwitchMarkers(selected.id, { first: 100 });
             const markers = Array.isArray(data?.markers) ? data.markers : [];
             if (!markers.length) {
+                clearActiveTask();
                 setConnectedVodStatus("No Twitch markers were found on the selected VOD.");
                 return [];
             }
@@ -1605,11 +2384,13 @@ const ReelMaker = (() => {
             if ($("reel-stream-markers")) {
                 $("reel-stream-markers").value = buildMarkerTextFromTwitchMarkers(markers);
             }
+            clearActiveTask();
             setConnectedVodStatus(`Loaded ${markers.length} Twitch marker${markers.length === 1 ? "" : "s"} from the selected VOD. Importing them into clips...`);
             await importStreamMarkers();
             setConnectedVodStatus(`Imported ${markers.length} Twitch marker${markers.length === 1 ? "" : "s"} into this project.`);
             return markers;
         } catch (e) {
+            clearActiveTask();
             setConnectedVodStatus(e.message || "Failed to import Twitch markers.", { error: true });
             return [];
         } finally {
@@ -1638,6 +2419,8 @@ const ReelMaker = (() => {
             btn.disabled = true;
             btn.textContent = "Importing...";
         }
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Importing Twitch clips into the session inbox...", { source: "Inbox" });
 
         try {
             if (!connectedTwitchClips.length) {
@@ -1647,6 +2430,7 @@ const ReelMaker = (() => {
 
             const importableClips = getImportableConnectedTwitchClips(selected);
             if (!importableClips.length) {
+                clearActiveTask();
                 setConnectedClipStatus("No Twitch clips with VOD offsets are ready to import for this stream yet.", { error: true });
                 return [];
             }
@@ -1655,6 +2439,7 @@ const ReelMaker = (() => {
                 setConnectedVodStatus("Loading the selected VOD before importing Twitch clips...");
                 const loadedVod = await loadSelectedConnectedTwitchVod({ quiet: true, loadClips: false });
                 if (!loadedVod) {
+                    clearActiveTask();
                     setConnectedClipStatus("The selected Twitch VOD could not be loaded into the editor.", { error: true });
                     return [];
                 }
@@ -1692,6 +2477,7 @@ const ReelMaker = (() => {
                 show("reel-clip-actions");
             }
 
+            clearActiveTask();
             if ((data.imported_count || 0) > 0) {
                 setSourceMomentStatus(data.message || `Imported ${data.imported_count} Twitch clip(s).`);
                 setConnectedClipStatus(`Imported ${data.imported_count} Twitch clip${data.imported_count === 1 ? "" : "s"} into this project.`);
@@ -1707,6 +2493,7 @@ const ReelMaker = (() => {
             updateToolbarState();
             return data.imported_clips || [];
         } catch (e) {
+            clearActiveTask();
             setConnectedClipStatus(e.message || "Failed to import Twitch clips.", { error: true });
             return [];
         } finally {
@@ -2183,10 +2970,11 @@ const ReelMaker = (() => {
     function updateWorkspaceChrome(project = null) {
         const summary = project || recentProjects.find((item) => item.project_id === projectId) || null;
         const activePreset = getExportFormatConfig();
-        const currentTitle = summary?.title || (projectId ? `Project ${projectId}` : "Video Editor Workspace");
+        const currentTitle = summary?.title || (projectId ? `Project ${projectId}` : "Streamer Workflow Workspace");
         const totalDuration = getTotalClipDuration();
         const clipCount = getClipRows().length;
         const row = getActiveClipRow();
+        const workspaceLabel = getWorkspaceLabel();
         const sourceChip = $("reel-monitor-source-chip");
         const sequenceChip = $("reel-monitor-sequence-chip");
         const canPreviewSource = sourceType === "file"
@@ -2195,6 +2983,18 @@ const ReelMaker = (() => {
 
         if ($("reel-window-project-label")) {
             $("reel-window-project-label").textContent = currentTitle;
+        }
+
+        if ($("reel-toolbar-project-summary")) {
+            if (!projectId) {
+                $("reel-toolbar-project-summary").textContent = "No project loaded";
+            } else {
+                const roleLabel = summary?.project_role === "longform" ? "Longform" : "Shortform";
+                $("reel-toolbar-project-summary").textContent = `${currentTitle} · ${clipCount} clip${clipCount === 1 ? "" : "s"} · ${roleLabel}`;
+            }
+        }
+        if ($("reel-toolbar-workspace-summary")) {
+            $("reel-toolbar-workspace-summary").textContent = `Workspace: ${workspaceLabel}`;
         }
 
         if ($("reel-monitor-title")) {
@@ -2242,6 +3042,9 @@ const ReelMaker = (() => {
         if ($("reel-status-project")) {
             $("reel-status-project").textContent = projectId ? currentTitle : "No project loaded";
         }
+        if ($("reel-status-workspace")) {
+            $("reel-status-workspace").textContent = `${workspaceLabel} workspace`;
+        }
         if ($("reel-status-selection")) {
             if (row) {
                 const start = parseTimestamp(row.querySelector(".clip-start")?.value || "0");
@@ -2265,6 +3068,8 @@ const ReelMaker = (() => {
                 ? `${clipCount} clip${clipCount === 1 ? "" : "s"} · ${formatTimestamp(totalDuration)} total`
                 : "0 clips";
         }
+        renderWorkspaceControls();
+        renderActivityStatus();
         renderFacecamGuide();
     }
 
@@ -2473,9 +3278,15 @@ const ReelMaker = (() => {
     function updateToolbarState() {
         const isUrlSource = sourceType === "url";
         const preparedShortCount = getPreparedClipRows().length;
+        syncBurnCaptionsSummary();
         updateExportCompositionUI();
         renderBetaFlowStatus();
         renderLongformBuildUI();
+        if ($("reel-toolbar-source-summary")) {
+            const sourceLabel = isUrlSource ? "URL" : "Local File";
+            const previewLabel = previewMode === "sequence" ? "Project Preview" : "Clip Preview";
+            $("reel-toolbar-source-summary").textContent = `Source: ${sourceLabel} · ${previewLabel}`;
+        }
         if ($("reel-url-input")) $("reel-url-input").disabled = !isUrlSource;
         if ($("reel-validate-btn")) $("reel-validate-btn").disabled = !isUrlSource;
         if ($("reel-import-moments-btn")) {
@@ -2499,6 +3310,7 @@ const ReelMaker = (() => {
             : Boolean(projectId && vodUrl);
         if ($("reel-preview-source-btn")) $("reel-preview-source-btn").disabled = !canPreviewSource;
         if ($("reel-preview-sequence-btn")) $("reel-preview-sequence-btn").disabled = !concatReady;
+        renderPreviewCompositionBadge();
 
         // Update total video duration from clip ranges
         const totalDurEl = $("reel-total-duration");
@@ -2515,6 +3327,7 @@ const ReelMaker = (() => {
                     : "Total clip duration before export";
             } else {
                 totalDurEl.textContent = "";
+                totalDurEl.title = "Total reel duration based on clip ranges";
             }
         }
 
@@ -2678,6 +3491,7 @@ const ReelMaker = (() => {
         }
         renderProjectChrome();
         renderBetaFlowStatus();
+        queueEditorSummaryPublish();
         return recentProjects;
     }
 
@@ -2714,6 +3528,8 @@ const ReelMaker = (() => {
         projectRole = "shortform";
         derivedFromProjectId = "";
         pendingLongformProject = null;
+        activeTask = null;
+        importedEditorFeedIds = new Set();
         if (clipInspectorTimer) {
             clearTimeout(clipInspectorTimer);
             clipInspectorTimer = null;
@@ -2751,6 +3567,7 @@ const ReelMaker = (() => {
         hide("reel-transcribe-progress");
         hide("reel-caption-editor");
         hide("reel-local-file-restore");
+        clearOperationRail();
         hideError("reel-step1-error");
         hideError("reel-step2-error");
         hideError("reel-step3-error");
@@ -3355,6 +4172,19 @@ const ReelMaker = (() => {
         updateToolbarState();
     }
 
+    function focusSourceInput() {
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setSourceType("url");
+        const input = $("reel-url-input");
+        if (input) {
+            window.setTimeout(() => {
+                input.focus();
+                input.select();
+            }, 50);
+        }
+        focusPanel("session", { scroll: true, workspaceId: "session" });
+    }
+
     function clearLocalVodPreviewUrl() {
         if (localVodObjectUrl) {
             URL.revokeObjectURL(localVodObjectUrl);
@@ -3367,7 +4197,9 @@ const ReelMaker = (() => {
     }
 
     function openLocalVodPicker() {
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
         setSourceType("file");
+        focusPanel("session", { scroll: true, workspaceId: "session" });
         $("reel-video-input")?.click();
     }
 
@@ -3605,6 +4437,7 @@ const ReelMaker = (() => {
                 throw new Error(project.error);
             }
             await applyProjectState(project, resumeProjectId);
+            await syncEditorFeedIntoProject({ quiet: true });
             await loadRecentProjects();
             return true;
         } catch (e) {
@@ -3628,6 +4461,134 @@ const ReelMaker = (() => {
     async function startNewProject() {
         resetEditorState({ forgetProject: true });
         await loadRecentProjects();
+    }
+
+    async function importLaunchTwitchClip(params) {
+        if (!projectId || !params?.clipId || params.startSec === null || params.endSec === null) {
+            return false;
+        }
+
+        const rawClip = {
+            created_at: params.createdAt || "",
+            duration: Math.max(MIN_CLIP_DURATION, Number(params.endSec) - Number(params.startSec)),
+            id: params.clipId,
+            title: params.candidateTitle || "Twitch Clip",
+            url: params.clipUrl || "",
+            video_id: params.videoId || "",
+            view_count: params.viewCount ?? null,
+            vod_offset: params.vodOffset ?? params.startSec,
+        };
+
+        const data = await api("/api/reel/import-twitch-clips", {
+            method: "POST",
+            body: JSON.stringify({
+                project_id: projectId,
+                clips: [rawClip],
+            }),
+        });
+
+        if (data.error) {
+            setConnectedClipStatus(data.error, { error: true });
+            return false;
+        }
+
+        sourceMoments = data.moments || sourceMoments;
+        connectedTwitchClips = sourceMoments.filter((moment) => String(moment?.kind || "").toLowerCase() === "twitch_clip");
+        renderConnectedTwitchClips(connectedTwitchClips);
+
+        const currentIds = new Set(getClipRows().map((row) => row.dataset.clipId));
+        (data.imported_clips || []).forEach((clip) => {
+            if (!currentIds.has(clip.id)) {
+                renderClipItem(clip);
+                currentIds.add(clip.id);
+            }
+        });
+
+        if (getClipRows().length > 0) {
+            enableStep(2);
+            show("reel-clip-actions");
+        }
+
+        const targetMoment = sourceMoments.find((moment) => String(moment?.clip_id || "") === params.clipId)
+            || {
+                end_sec: params.endSec,
+                kind: "twitch_clip",
+                start_sec: params.startSec,
+            };
+
+        selectClipForMoment(targetMoment);
+        const summary = summarizeSourceMoments(sourceMoments).slice(0, 3).join(" · ");
+        setSessionInboxStatus(summary ? `${sourceMoments.length} session moments ready. ${summary}.` : "Twitch clip imported into the session inbox.");
+        setConnectedClipStatus(data.message || "Twitch clip is ready in this project.");
+        await loadRecentProjects();
+        await loadProjectAssets();
+        updateToolbarState();
+        return true;
+    }
+
+    async function consumeOpenNowLaunch() {
+        const params = readLaunchParams();
+        if (!params.openNow) {
+            return false;
+        }
+
+        let opened = false;
+
+        try {
+            let resumed = false;
+            if (params.projectId) {
+                resumed = await resumeProject(params.projectId, { silent: true });
+            }
+
+            if (!resumed && params.vodUrl) {
+                setWorkspace("session", { scroll: false, focusPanelId: "session" });
+                setSourceType("url");
+                if ($("reel-url-input")) {
+                    $("reel-url-input").value = params.vodUrl;
+                }
+                const loaded = await validateUrl();
+                if (!loaded) {
+                    return false;
+                }
+            }
+
+            if (!projectId) {
+                await ensureProject();
+            }
+
+            applyLaunchSessionDetails(params);
+            await saveSessionDetails({ quiet: true });
+            await syncEditorFeedIntoProject({ quiet: true });
+
+            if (params.candidateKind === "twitch_clip" && params.clipId && params.startSec !== null && params.endSec !== null) {
+                await importLaunchTwitchClip(params);
+            } else if (params.startSec !== null && params.endSec !== null) {
+                selectClipForMoment({
+                    end_sec: params.endSec,
+                    kind: params.candidateKind || "source_moment",
+                    start_sec: params.startSec,
+                });
+            }
+
+            if (params.startSec !== null && params.endSec !== null) {
+                focusStep(2);
+            } else {
+                focusStep(1);
+            }
+
+            queueEditorSummaryPublish({ force: true, delayMs: 40 });
+            opened = true;
+            setOperationRail("Opened the mirrored editing handoff from DM Toolkit.", {
+                source: "Toolkit",
+                tone: "success",
+            });
+            return true;
+        } finally {
+            consumeLaunchParams();
+            if (!opened) {
+                queueEditorSummaryPublish({ force: true, delayMs: 40 });
+            }
+        }
     }
 
     async function saveSessionDetails(options = {}) {
@@ -3757,6 +4718,8 @@ const ReelMaker = (() => {
             btn.disabled = true;
             btn.textContent = "Creating...";
         }
+        setWorkspace("output", { scroll: false, focusPanelId: "output" });
+        setActiveTask("Building the linked longform project...", { source: "Output" });
 
         try {
             await saveSessionDetails({ quiet: true });
@@ -3780,12 +4743,14 @@ const ReelMaker = (() => {
                     : "Longform project is ready. Open it when you are ready to continue the horizontal edit.",
             };
             renderLongformBuildUI();
+            clearActiveTask();
             setStreamerStatus(
                 selectedCount > 0
                     ? `Built longform project ${data.project_id} from ${selectedCount} queued prepared short${selectedCount === 1 ? "" : "s"} out of ${sourceCount || selectedCount} source clip${(sourceCount || selectedCount) === 1 ? "" : "s"}.`
                     : `Built longform project ${data.project_id} from the prepared shorts in this session.`,
             );
         } catch (e) {
+            clearActiveTask();
             showError("reel-step4-error", e.message || "Failed to create longform version.");
         } finally {
             if (btn) {
@@ -3819,6 +4784,8 @@ const ReelMaker = (() => {
         const btn = $("reel-validate-btn");
         btn.disabled = true;
         btn.textContent = "Loading...";
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask("Inspecting the source URL and loading stream metadata...", { source: "Ingest" });
 
         try {
             concatReady = false;
@@ -3833,6 +4800,7 @@ const ReelMaker = (() => {
             });
 
             if (!data.valid) {
+                clearActiveTask();
                 showError("reel-step1-error", data.error || "Invalid URL");
                 return false;
             }
@@ -3868,8 +4836,14 @@ const ReelMaker = (() => {
             if ((importResult.imported_count || 0) === 0 && $("reel-clip-list").children.length === 0) {
                 await addClip();
             }
+            clearActiveTask({
+                message: `Loaded ${data.title || "source video"} into the session.`,
+                source: "Ingest",
+                tone: "success",
+            });
             return true;
         } catch (e) {
+            clearActiveTask();
             showError("reel-step1-error", e.message || "Validation failed");
             return false;
         } finally {
@@ -3962,6 +4936,8 @@ const ReelMaker = (() => {
         if (!file) return;
 
         hideError("reel-step1-error");
+        setWorkspace("session", { scroll: false, focusPanelId: "session" });
+        setActiveTask(`Loading local file ${file.name}...`, { source: "Ingest" });
         clearLocalVodPreviewUrl();
         localVodFile = file;
         localVodUploaded = false;
@@ -4007,7 +4983,13 @@ const ReelMaker = (() => {
             if ($("reel-clip-list").children.length === 0) {
                 await addClip();
             }
+            clearActiveTask({
+                message: `${file.name || "Local video"} is ready in the session workspace.`,
+                source: "Ingest",
+                tone: "success",
+            });
         } catch (e) {
+            clearActiveTask();
             showError("reel-step1-error", e.message || "Failed to load local video.");
         }
     }
@@ -4055,33 +5037,45 @@ const ReelMaker = (() => {
         }
 
         await ensureProject();
+        setActiveTask("Uploading the local source video for stitching and render...", { source: "Ingest" });
         const formData = new FormData();
         formData.append("project_id", projectId);
         formData.append("video", localVodFile);
+        try {
+            const data = await api("/api/reel/upload-vod", {
+                method: "POST",
+                body: formData,
+            });
 
-        const data = await api("/api/reel/upload-vod", {
-            method: "POST",
-            body: formData,
-        });
+            if (data.error) {
+                clearActiveTask();
+                showError("reel-step1-error", data.error);
+                return false;
+            }
 
-        if (data.error) {
-            showError("reel-step1-error", data.error);
+            vodDuration = data.duration || vodDuration;
+            $("reel-vod-title").textContent = data.filename || localVodFile.name || "Local video";
+            $("reel-vod-duration").textContent = formatTime(vodDuration);
+            show("reel-vod-info");
+            hide("reel-local-file-restore");
+            localVodUploaded = true;
+            await loadRecentProjects();
+            await loadProjectAssets();
+            if (previewMode === "source") {
+                loadPreview(`/api/reel/serve-vod/${projectId}`, "source");
+            }
+            clearActiveTask({
+                message: `${data.filename || localVodFile.name || "Local video"} uploaded and ready for stitching.`,
+                source: "Ingest",
+                tone: "success",
+            });
+            updateToolbarState();
+            return true;
+        } catch (e) {
+            clearActiveTask();
+            showError("reel-step1-error", e.message || "Failed to upload the local video.");
             return false;
         }
-
-        vodDuration = data.duration || vodDuration;
-        $("reel-vod-title").textContent = data.filename || localVodFile.name || "Local video";
-        $("reel-vod-duration").textContent = formatTime(vodDuration);
-        show("reel-vod-info");
-        hide("reel-local-file-restore");
-        localVodUploaded = true;
-        await loadRecentProjects();
-        await loadProjectAssets();
-        if (previewMode === "source") {
-            loadPreview(`/api/reel/serve-vod/${projectId}`, "source");
-        }
-        updateToolbarState();
-        return true;
     }
 
     function renderClipItem(clip) {
@@ -4240,6 +5234,7 @@ const ReelMaker = (() => {
     async function downloadAllClips() {
         hideError("reel-step2-error");
         if (!projectId) return;
+        setWorkspace("inbox", { scroll: false, focusPanelId: "inbox" });
 
         if (!(await ensureLocalVodUploaded())) {
             return;
@@ -4247,8 +5242,10 @@ const ReelMaker = (() => {
 
         const btn = $("reel-download-clips-btn");
         btn.disabled = true;
+        show("reel-clip-actions");
         show("reel-download-status");
         resetExportState();
+        setActiveTask("Preparing the current short stack for download and stitch...", { source: "Inbox" });
 
         try {
             const data = await api("/api/reel/download-clips", {
@@ -4257,6 +5254,7 @@ const ReelMaker = (() => {
             });
 
             if (data.error) {
+                clearActiveTask();
                 showError("reel-step2-error", data.error);
                 btn.disabled = false;
                 hide("reel-download-status");
@@ -4268,9 +5266,14 @@ const ReelMaker = (() => {
             pollTimer = setInterval(async () => {
                 try {
                     const status = await api(`/api/status/${jobId}`);
+                    const progress = Math.round(Number(status.progress || 0));
 
                     $("reel-download-bar").style.width = `${status.progress || 0}%`;
                     $("reel-download-status-text").textContent = status.stage || "Processing...";
+                    setActiveTask(
+                        `${status.stage || "Processing clips..."}${progress > 0 ? ` (${progress}%)` : ""}`,
+                        { source: "Inbox" },
+                    );
 
                     if (status.status === "complete") {
                         clearInterval(pollTimer);
@@ -4289,6 +5292,11 @@ const ReelMaker = (() => {
                         // Enable export step
                         enableStep(4);
                         $("reel-export-btn").disabled = false;
+                        clearActiveTask({
+                            message: `Short sequence is ready. ${status.clips_downloaded} clip${Number(status.clips_downloaded || 0) === 1 ? "" : "s"} stitched${status.clips_failed > 0 ? `, ${status.clips_failed} failed` : ""}.`,
+                            source: "Inbox",
+                            tone: "success",
+                        });
 
                         // Load preview
                         loadConcatPreview();
@@ -4304,6 +5312,7 @@ const ReelMaker = (() => {
                         clearInterval(pollTimer);
                         pollTimer = null;
                         btn.disabled = false;
+                        clearActiveTask();
                         showError("reel-step2-error", status.error || "Download failed");
                     }
                 } catch (e) {
@@ -4311,6 +5320,7 @@ const ReelMaker = (() => {
                 }
             }, 1000);
         } catch (e) {
+            clearActiveTask();
             showError("reel-step2-error", e.message || "Download failed");
             btn.disabled = false;
             hide("reel-download-status");
@@ -4402,6 +5412,8 @@ const ReelMaker = (() => {
         video.src = src;
         video.load();
         show("reel-video-sidebar");
+        renderPreviewCompositionBadge();
+        renderFacecamGuide();
         renderPreviewTimelines();
     }
 
@@ -4432,6 +5444,7 @@ const ReelMaker = (() => {
             showError("reel-step3-error", "Download clips first.");
             return;
         }
+        setWorkspace("captions", { scroll: false, focusPanelId: "captions" });
         markExportDirty();
 
         const languageRaw = $("reel-caption-language").value;
@@ -4441,6 +5454,7 @@ const ReelMaker = (() => {
 
         $("reel-transcribe-btn").disabled = true;
         show("reel-transcribe-progress");
+        setActiveTask("Starting the caption pass on the stitched sequence...", { source: "Captions" });
 
         try {
             const data = await api("/api/reel/transcribe", {
@@ -4454,6 +5468,7 @@ const ReelMaker = (() => {
             });
 
             if (data.error) {
+                clearActiveTask();
                 showError("reel-step3-error", data.error);
                 $("reel-transcribe-btn").disabled = false;
                 hide("reel-transcribe-progress");
@@ -4465,14 +5480,24 @@ const ReelMaker = (() => {
             const timer = setInterval(async () => {
                 try {
                     const status = await api(`/api/status/${jobId}`);
+                    const progress = Math.round(Number(status.progress || 0));
                     $("reel-transcribe-bar").style.width = `${status.progress || 0}%`;
                     $("reel-transcribe-status").textContent = status.stage || "Processing...";
+                    setActiveTask(
+                        `${status.stage || "Running caption pass..."}${progress > 0 ? ` (${progress}%)` : ""}`,
+                        { source: "Captions" },
+                    );
 
                     if (status.status === "complete") {
                         clearInterval(timer);
                         $("reel-transcribe-btn").disabled = false;
                         $("reel-transcribe-status").textContent =
                             `Done! ${status.word_count || 0} words, ${status.speaker_count || 1} speaker(s) detected.`;
+                        clearActiveTask({
+                            message: `Caption pass complete. ${status.word_count || 0} words and ${status.speaker_count || 1} speaker track${Number(status.speaker_count || 1) === 1 ? "" : "s"} ready.`,
+                            source: "Captions",
+                            tone: "success",
+                        });
 
                         // Load caption editor
                         if (typeof CaptionEditor !== "undefined") {
@@ -4485,6 +5510,7 @@ const ReelMaker = (() => {
                     } else if (status.status === "error") {
                         clearInterval(timer);
                         $("reel-transcribe-btn").disabled = false;
+                        clearActiveTask();
                         showError("reel-step3-error", status.error || "Transcription failed");
                     }
                 } catch (e) {
@@ -4492,6 +5518,7 @@ const ReelMaker = (() => {
                 }
             }, 1000);
         } catch (e) {
+            clearActiveTask();
             showError("reel-step3-error", e.message || "Transcription failed");
             $("reel-transcribe-btn").disabled = false;
             hide("reel-transcribe-progress");
@@ -4506,12 +5533,14 @@ const ReelMaker = (() => {
             showError("reel-step4-error", "Download clips first.");
             return;
         }
+        setWorkspace("output", { scroll: false, focusPanelId: "output" });
 
         const burnCaptions = $("reel-burn-captions")?.checked !== false;
         const btn = $("reel-export-btn");
         btn.disabled = true;
         show("reel-export-progress");
         hide("reel-export-download");
+        setActiveTask("Queueing the export job for the current project...", { source: "Output" });
 
         try {
             const data = await api("/api/reel/export", {
@@ -4524,6 +5553,7 @@ const ReelMaker = (() => {
             });
 
             if (data.error) {
+                clearActiveTask();
                 showError("reel-step4-error", data.error);
                 btn.disabled = false;
                 hide("reel-export-progress");
@@ -4537,8 +5567,13 @@ const ReelMaker = (() => {
             const timer = setInterval(async () => {
                 try {
                     const status = await api(`/api/status/${jobId}`);
+                    const progress = Math.round(Number(status.progress || 0));
                     $("reel-export-bar").style.width = `${status.progress || 0}%`;
                     $("reel-export-status").textContent = status.stage || "Processing...";
+                    setActiveTask(
+                        `${status.stage || "Rendering output..."}${progress > 0 ? ` (${progress}%)` : ""}`,
+                        { source: "Output" },
+                    );
 
                     if (status.status === "complete") {
                         clearInterval(timer);
@@ -4551,12 +5586,18 @@ const ReelMaker = (() => {
                         }
                         show("reel-export-download");
                         show("reel-export-download-btn");
+                        clearActiveTask({
+                            message: `Render complete. ${status.filename || "video.mp4"} is ready to download.`,
+                            source: "Output",
+                            tone: "success",
+                        });
                         loadRecentProjects();
                         loadProjectAssets();
                         updateToolbarState();
                     } else if (status.status === "error") {
                         clearInterval(timer);
                         btn.disabled = false;
+                        clearActiveTask();
                         showError("reel-step4-error", status.error || "Export failed");
                     }
                 } catch (e) {
@@ -4564,6 +5605,7 @@ const ReelMaker = (() => {
                 }
             }, 1000);
         } catch (e) {
+            clearActiveTask();
             showError("reel-step4-error", e.message || "Export failed");
             btn.disabled = false;
             hide("reel-export-progress");
@@ -4581,12 +5623,17 @@ const ReelMaker = (() => {
             const user = detail?.user || null;
             if (user) {
                 applyAuthProfile(user, { overwrite: false, persist: Boolean(projectId) });
+                queueEditorSummaryPublish({ force: true, delayMs: 40 });
+                if (projectId) {
+                    void syncEditorFeedIntoProject({ quiet: true });
+                }
             }
             updateConnectedTwitchControls(detail);
         });
         document.addEventListener("dm:deps-status", (event) => {
             renderCaptionRuntimeCard(event?.detail || null);
         });
+        initChromeMenus();
         $("reel-video-input")?.addEventListener("change", onLocalVideoSelect);
         $("reel-url-input")?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") validateUrl();
@@ -4596,6 +5643,11 @@ const ReelMaker = (() => {
             if (projectId) {
                 setSessionInboxStatus(`Default short preset set to ${getShortPresetConfig().label}. Use Prep Short on any session moment to apply it.`);
             }
+        });
+        $("reel-burn-captions")?.addEventListener("change", () => {
+            syncBurnCaptionsSummary();
+            renderPreviewCompositionBadge();
+            markExportDirty();
         });
         const channelField = $("reel-session-channel");
         channelField?.addEventListener("change", () => {
@@ -4740,6 +5792,7 @@ const ReelMaker = (() => {
         resetEditorState({ forgetProject: false });
         await loadRecentProjects();
         await restoreLastProject();
+        await consumeOpenNowLaunch();
         if (typeof DmAuth !== "undefined" && typeof DmAuth.getState === "function") {
             const authState = DmAuth.getState();
             if (authState?.user) {
@@ -4760,10 +5813,13 @@ const ReelMaker = (() => {
 
     async function detectMoments() {
         if (!projectId) return;
+        setWorkspace("inbox", { scroll: false, focusPanelId: "inbox" });
         const statusEl = $("reel-detect-moments-status");
         const btn = $("reel-detect-moments-btn");
+        show("reel-clip-actions");
         if (statusEl) { statusEl.textContent = "Detecting..."; statusEl.classList.remove("hidden"); }
         if (btn) btn.disabled = true;
+        setActiveTask("Scanning the source for highlight candidates...", { source: "Inbox" });
 
         try {
             const data = await api("/api/reel/detect-moments", {
@@ -4771,6 +5827,7 @@ const ReelMaker = (() => {
                 body: JSON.stringify({ project_id: projectId }),
             });
             if (data.error) {
+                clearActiveTask();
                 if (statusEl) statusEl.textContent = data.error;
                 if (btn) btn.disabled = false;
                 return;
@@ -4778,11 +5835,24 @@ const ReelMaker = (() => {
             const jobId = data.job_id;
             const poll = setInterval(async () => {
                 const status = await api(`/api/status/${jobId}`);
+                const progress = Math.round(Number(status.progress || 0));
+                setActiveTask(
+                    `${status.stage || "Detecting moments..."}${progress > 0 ? ` (${progress}%)` : ""}`,
+                    { source: "Inbox" },
+                );
+                if (statusEl) {
+                    statusEl.textContent = status.stage || "Detecting...";
+                }
                 if (status.status === "complete") {
                     clearInterval(poll);
                     if (btn) btn.disabled = false;
                     const moments = status.moments || [];
                     if (moments.length === 0) {
+                        clearActiveTask({
+                            message: "No distinct moments were detected in this source.",
+                            source: "Inbox",
+                            tone: "info",
+                        });
                         if (statusEl) statusEl.textContent = "No distinct moments detected.";
                         return;
                     }
@@ -4803,15 +5873,22 @@ const ReelMaker = (() => {
                             renderClipItem(newClipData.clip);
                         }
                     }
+                    clearActiveTask({
+                        message: `Added ${moments.length} detected moment${moments.length === 1 ? "" : "s"} into the inbox.`,
+                        source: "Inbox",
+                        tone: "success",
+                    });
                     if (statusEl) statusEl.textContent = `Added ${moments.length} moment(s) as clips.`;
                     updateToolbarState();
                 } else if (status.status === "error") {
                     clearInterval(poll);
                     if (btn) btn.disabled = false;
+                    clearActiveTask();
                     if (statusEl) statusEl.textContent = `Error: ${status.error}`;
                 }
             }, 1000);
         } catch (e) {
+            clearActiveTask();
             if (statusEl) statusEl.textContent = `Error: ${e.message}`;
             if (btn) btn.disabled = false;
         }
@@ -4858,11 +5935,19 @@ const ReelMaker = (() => {
         setLongformQueueForPrepared,
         setFacecamPreset,
         createLongformVersion,
+        focusStep,
+        setWorkspace,
+        focusPanel,
+        toggleWorkspacePanel,
+        resetWorkspacePanels,
+        focusSourceInput,
         openPendingLongformProject,
         dismissLongformHandoff,
         applyAuthProfile,
         detectMoments,
         attachCaptionTrack,
         duplicateClip,
+        toggleMenu,
+        closeMenus,
     };
 })();

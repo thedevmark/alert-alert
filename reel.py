@@ -312,6 +312,63 @@ def register_reel_routes(app):
 
         return dedupe_moments(moments)
 
+    def extract_editor_feed_moments(items, duration=0):
+        moments = []
+        allowed_kinds = {"twitch_clip", "stream_marker", "chat_bookmark", "music_event", "source_moment"}
+        for idx, entry in enumerate(items or [], start=1):
+            if not isinstance(entry, dict):
+                continue
+
+            kind = str(entry.get("kind", "") or entry.get("source_kind", "")).strip().lower() or "source_moment"
+            if kind not in allowed_kinds:
+                kind = "source_moment"
+
+            title = str(entry.get("title", "")).strip() or f"Feed Item {idx}"
+            start_raw = entry.get("startSec", entry.get("start_sec", 0))
+            end_raw = entry.get("endSec", entry.get("end_sec", 0))
+            try:
+                start_sec = float(start_raw)
+            except (TypeError, ValueError):
+                start_sec = 0.0
+            try:
+                end_sec = float(end_raw)
+            except (TypeError, ValueError):
+                end_sec = start_sec + 30.0
+            if end_sec <= start_sec:
+                end_sec = start_sec + 30.0
+
+            extra_fields = {
+                "clip_id": str(entry.get("clipId", entry.get("clip_id", ""))).strip(),
+                "clip_url": str(entry.get("clipUrl", entry.get("clip_url", ""))).strip(),
+                "created_at": str(entry.get("createdAt", entry.get("created_at", ""))).strip(),
+                "feed_id": str(entry.get("id", "")).strip(),
+                "note": str(entry.get("note", "")).strip(),
+                "project_id": str(entry.get("projectId", entry.get("project_id", ""))).strip(),
+                "session_label": str(entry.get("sessionLabel", entry.get("session_label", ""))).strip(),
+                "video_id": str(entry.get("videoId", entry.get("video_id", ""))).strip(),
+                "vod_offset": entry.get("vodOffset", entry.get("vod_offset", start_sec)),
+                "vod_url": str(entry.get("vodUrl", entry.get("vod_url", ""))).strip(),
+            }
+
+            channel_name = str(entry.get("channelName", entry.get("channel_name", ""))).strip()
+            if channel_name:
+                extra_fields["channel_name"] = channel_name
+
+            score = entry.get("viewCount", entry.get("view_count"))
+            moment = build_moment(
+                start_sec,
+                end_sec,
+                title,
+                kind,
+                score=score,
+                duration=duration,
+                extra_fields=extra_fields,
+            )
+            if moment:
+                moments.append(moment)
+
+        return dedupe_moments(moments)
+
     SHORTFORM_PRESET_RECIPES = {
         "gameplay_focus": {
             "label": "Gameplay Focus",
@@ -1253,6 +1310,59 @@ def register_reel_routes(app):
             "imported_clips": imported,
             "imported_count": len(imported),
             "message": f"Imported {len(imported)} Twitch clip(s).",
+        })
+
+    @app.route("/api/reel/import-editor-feed", methods=["POST"])
+    def reel_import_editor_feed():
+        data = request.get_json() or {}
+        project_id = data.get("project_id", "")
+        project = load_reel_project(project_id)
+        if not project:
+            return jsonify({"error": "Project not found"}), 404
+
+        raw_items = data.get("items") or []
+        if not isinstance(raw_items, list) or not raw_items:
+            return jsonify({"error": "No editor feed items were provided."}), 400
+
+        feed_moments = extract_editor_feed_moments(raw_items, project.get("vod_duration", 0))
+        if not feed_moments:
+            return jsonify({"error": "No valid editor feed items could be imported."}), 400
+
+        existing_feed_ids = {
+            str(moment.get("feed_id", "")).strip()
+            for moment in project.get("source_moments", [])
+            if str(moment.get("feed_id", "")).strip()
+        }
+        imported_clips = []
+        imported_feed_ids = []
+        created_count = 0
+
+        for moment in feed_moments:
+            feed_id = str(moment.get("feed_id", "")).strip()
+            if feed_id and feed_id in existing_feed_ids:
+                continue
+
+            clip, created = ensure_clip_for_moment(project, moment)
+            if clip is not None and moment.get("note"):
+                clip["note"] = str(moment.get("note", "")).strip()
+            if created and clip is not None:
+                imported_clips.append(clip)
+                created_count += 1
+            if feed_id:
+                existing_feed_ids.add(feed_id)
+                imported_feed_ids.append(feed_id)
+
+        save_reel_project(project_id)
+        return jsonify({
+            "status": "ok",
+            "imported_clips": imported_clips,
+            "imported_count": len(imported_feed_ids),
+            "imported_feed_ids": imported_feed_ids,
+            "moments": project.get("source_moments", []),
+            "message": (
+                f"Imported {len(imported_feed_ids)} feed item(s)"
+                + (f" and created {created_count} clip(s)." if created_count else ".")
+            ),
         })
 
     @app.route("/api/reel/prepare-short", methods=["POST"])

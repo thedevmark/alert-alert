@@ -2,6 +2,7 @@ const DmAuth = (() => {
     const SHARED_AUTH_URL = "https://auth.deutschmark.online";
     const LOCAL_SHARED_AUTH_PROXY_URL = "/api/shared-auth";
     const LOCAL_AUTH_TOKEN_STORAGE_KEY = "dmSharedAuthToken";
+    const LOCAL_POST_LOGIN_HASH_STORAGE_KEY = "dmSharedAuthPostLoginHash";
     const SUPPORTED_REMOTE_RETURN_ORIGINS = new Set([
         "https://toolkit.deutschmark.online",
         "https://collab.deutschmark.online",
@@ -26,6 +27,18 @@ const DmAuth = (() => {
         return document.getElementById(id);
     }
 
+    function normalizeHostname(hostname) {
+        return String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase();
+    }
+
+    function isLoopbackHostname(hostname) {
+        const normalized = normalizeHostname(hostname);
+        return normalized === "localhost"
+            || normalized === "127.0.0.1"
+            || normalized === "0.0.0.0"
+            || normalized === "::1";
+    }
+
     function readCookie(name) {
         const cookies = document.cookie.split(/;\s*/);
         for (const cookie of cookies) {
@@ -46,6 +59,14 @@ const DmAuth = (() => {
         }
     }
 
+    function readStoredPostLoginHash() {
+        try {
+            return window.sessionStorage.getItem(LOCAL_POST_LOGIN_HASH_STORAGE_KEY) || "";
+        } catch (error) {
+            return "";
+        }
+    }
+
     function writeStoredAuthToken(token) {
         try {
             if (token) {
@@ -58,13 +79,51 @@ const DmAuth = (() => {
         }
     }
 
-    function getCurrentOrigin() {
+    function writeStoredPostLoginHash(hash) {
+        try {
+            if (hash) {
+                window.sessionStorage.setItem(LOCAL_POST_LOGIN_HASH_STORAGE_KEY, hash);
+            } else {
+                window.sessionStorage.removeItem(LOCAL_POST_LOGIN_HASH_STORAGE_KEY);
+            }
+        } catch (error) {
+            // Ignore storage failures.
+        }
+    }
+
+    function getRawCurrentOrigin() {
         return window.location.origin;
+    }
+
+    function normalizeLocalOrigin(origin) {
+        try {
+            const url = new URL(origin);
+            if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) {
+                url.hostname = "localhost";
+            }
+            return url.origin;
+        } catch (error) {
+            return origin;
+        }
+    }
+
+    function normalizeLocalUrl(url) {
+        if (!(url instanceof URL)) {
+            return url;
+        }
+        if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) {
+            url.hostname = "localhost";
+        }
+        return url;
+    }
+
+    function getCurrentOrigin() {
+        return normalizeLocalOrigin(getRawCurrentOrigin());
     }
 
     function isLocalhostOrigin(origin) {
         try {
-            const url = new URL(origin);
+            const url = new URL(normalizeLocalOrigin(origin));
             return url.protocol === "http:" && url.hostname === "localhost";
         } catch (error) {
             return false;
@@ -85,13 +144,16 @@ const DmAuth = (() => {
     }
 
     function buildReturnTo() {
-        return window.location.href;
+        const currentUrl = normalizeLocalUrl(new URL(window.location.href));
+        writeStoredPostLoginHash(currentUrl.hash || "");
+        currentUrl.hash = "";
+        return currentUrl.toString();
     }
 
     function buildLoginUrl() {
         if (!isReturnOriginSupported()) {
             throw new Error(
-                `Shared Twitch auth is only wired for http://localhost:<port> or an approved deutschmark.online app origin. Current origin: ${getCurrentOrigin()}.`,
+                `Shared Twitch auth is only wired for http://localhost:<port> or an approved deutschmark.online app origin. Current origin: ${getRawCurrentOrigin()}.`,
             );
         }
 
@@ -100,15 +162,72 @@ const DmAuth = (() => {
         return url.toString();
     }
 
+    function readHashAuthToken(hash) {
+        const rawHash = String(hash || "");
+        if (!rawHash || rawHash === "#") {
+            return { cleanHash: "", token: "" };
+        }
+
+        const normalized = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+        let fragmentPath = normalized;
+        let fragmentQuery = "";
+
+        if (normalized.startsWith("?")) {
+            fragmentPath = "";
+            fragmentQuery = normalized.slice(1);
+        } else {
+            const queryIndex = normalized.indexOf("?");
+            if (queryIndex >= 0) {
+                fragmentPath = normalized.slice(0, queryIndex);
+                fragmentQuery = normalized.slice(queryIndex + 1);
+            } else if (normalized.startsWith("dm_auth_token=")) {
+                fragmentPath = "";
+                fragmentQuery = normalized;
+            }
+        }
+
+        if (!fragmentQuery) {
+            return { cleanHash: rawHash, token: "" };
+        }
+
+        const params = new URLSearchParams(fragmentQuery);
+        const token = params.get("dm_auth_token") || "";
+        if (!token) {
+            return { cleanHash: rawHash, token: "" };
+        }
+
+        params.delete("dm_auth_token");
+        const remainingQuery = params.toString();
+        const cleanHash = fragmentPath
+            ? `#${fragmentPath}${remainingQuery ? `?${remainingQuery}` : ""}`
+            : (remainingQuery ? `#?${remainingQuery}` : "");
+
+        return { cleanHash, token };
+    }
+
     function consumeAuthTokenFromUrl() {
         const currentUrl = new URL(window.location.href);
-        const token = currentUrl.searchParams.get("dm_auth_token") || "";
+        const searchToken = currentUrl.searchParams.get("dm_auth_token") || "";
+        const hashAuth = searchToken
+            ? { cleanHash: currentUrl.hash || "", token: "" }
+            : readHashAuthToken(currentUrl.hash);
+        const token = searchToken || hashAuth.token || "";
         if (!token) {
             return readStoredAuthToken();
         }
 
         writeStoredAuthToken(token);
         currentUrl.searchParams.delete("dm_auth_token");
+        if (hashAuth.token) {
+            currentUrl.hash = hashAuth.cleanHash;
+        }
+        if (!currentUrl.hash) {
+            const storedHash = readStoredPostLoginHash();
+            if (storedHash) {
+                currentUrl.hash = storedHash;
+            }
+        }
+        writeStoredPostLoginHash("");
         window.history.replaceState({}, "", currentUrl.toString());
         return token;
     }
@@ -200,7 +319,7 @@ const DmAuth = (() => {
                 return null;
             }
             if (error.status === 403) {
-                return "This origin is not allowed by auth.deutschmark.online. Start the app on http://localhost:<port> or an approved deutschmark.online app origin.";
+                return `This origin is not allowed by auth.deutschmark.online. Current origin: ${getRawCurrentOrigin()}. Start the app on http://localhost:<port> or an approved deutschmark.online app origin.`;
             }
             if (error.data && typeof error.data === "object" && "error" in error.data) {
                 return String(error.data.error || "Shared auth request failed.");
@@ -332,7 +451,7 @@ const DmAuth = (() => {
     async function refreshSession() {
         if (!isReturnOriginSupported()) {
             setState({
-                error: `Shared Twitch auth is only wired for http://localhost:<port> or an approved deutschmark.online app origin. Current origin: ${getCurrentOrigin()}.`,
+                error: `Shared Twitch auth is only wired for http://localhost:<port> or an approved deutschmark.online app origin. Current origin: ${getRawCurrentOrigin()}.`,
                 isLoading: false,
                 user: null,
             });
@@ -425,6 +544,35 @@ const DmAuth = (() => {
         return request(`/twitch/clips${buildQuery(params)}`);
     }
 
+    function fetchEditorSummary() {
+        return request("/editor/summary");
+    }
+
+    function updateEditorSummary(summary = {}) {
+        return request("/editor/summary", {
+            method: "PUT",
+            body: JSON.stringify(summary),
+        });
+    }
+
+    function fetchEditorFeed() {
+        return request("/editor/feed");
+    }
+
+    function createEditorFeed(item = {}) {
+        return request("/editor/feed", {
+            method: "POST",
+            body: JSON.stringify(item),
+        });
+    }
+
+    function deleteEditorFeed(id) {
+        const params = id ? `?id=${encodeURIComponent(id)}` : "";
+        return request(`/editor/feed${params}`, {
+            method: "DELETE",
+        });
+    }
+
     async function init() {
         const token = consumeAuthTokenFromUrl();
         if (token) {
@@ -461,9 +609,14 @@ const DmAuth = (() => {
         fetchTwitchMarkers,
         fetchTwitchClips,
         fetchTwitchVideos,
+        fetchEditorFeed,
+        fetchEditorSummary,
         isReturnOriginSupported,
         login,
         logout,
+        createEditorFeed,
+        deleteEditorFeed,
         refreshSession,
+        updateEditorSummary,
     };
 })();
