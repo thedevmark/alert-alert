@@ -37,34 +37,6 @@
         </div>
         <div class="header-actions">
             <div class="navbar-dropdown">
-                <button id="auth-session-toggle" class="setting-pill" type="button" data-panel="auth-session-panel"
-                    onclick="App.toggleSettingsPanel('auth-session-panel')">
-                    <span class="pill-label">Twitch Auth</span>
-                    <span id="auth-pill-value" class="pill-value">Checking...</span>
-                    <span class="pill-caret">▾</span>
-                </button>
-                <div id="auth-session-panel" class="workflow-settings-panel navbar-settings-panel">
-                    <div class="settings-section">
-                        <label class="settings-label">Shared Twitch Session</label>
-                        <div class="auth-session-card">
-                            <div class="auth-session-meta">
-                                <div id="auth-session-avatar" class="auth-session-avatar">DM</div>
-                                <div class="auth-session-copy">
-                                    <p id="auth-session-name" class="auth-session-name">Checking shared auth session…</p>
-                                    <p id="auth-session-detail" class="settings-hint">Uses the same <strong>auth.deutschmark.online</strong> Twitch login as the toolkit.</p>
-                                </div>
-                            </div>
-                            <div class="auth-session-actions">
-                                <button type="button" class="secondary-btn" id="auth-login-btn" onclick="DmAuth.login()">Login with Twitch</button>
-                                <button type="button" class="secondary-btn" id="auth-refresh-btn" onclick="DmAuth.refreshSession()">Refresh</button>
-                                <button type="button" class="secondary-btn hidden" id="auth-logout-btn" onclick="DmAuth.logout()">Logout</button>
-                            </div>
-                            <p id="auth-session-error" class="settings-hint">Run the app on <code>http://localhost:&lt;port&gt;</code> or an approved deutschmark.online app origin to use shared auth.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="navbar-dropdown">
                 <button id="dependency-settings-toggle" class="setting-pill" type="button" data-panel="dependency-settings-panel"
                     onclick="App.toggleSettingsPanel('dependency-settings-panel')">
                     <span class="pill-label">Dependency Setup</span>
@@ -465,7 +437,6 @@
 
     <script src="/static/js/crop.js"></script>
     <script src="/static/js/app.js"></script>
-    <script src="/static/js/auth.js"></script>
     <script>
         // Alert! Alert! is single-mode now. Stub keeps any App.* callers happy
         // and ensures the alert workflow is shown on load.
