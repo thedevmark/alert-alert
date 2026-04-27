@@ -4,7 +4,6 @@ from PyInstaller.utils.hooks import collect_all
 datas = [('static', 'static')]
 binaries = []
 hiddenimports = [
-    'plistlib',
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',

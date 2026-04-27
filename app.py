@@ -2,7 +2,6 @@ import os
 import json
 import uuid
 import glob
-import plistlib  # Ensure frozen desktop builds bundle stdlib support used by pyannote.
 import re
 import mimetypes
 import platform
@@ -52,8 +51,6 @@ RUNTIME_BIN_DIR = RUNTIME_DIR / "bin"
 APP_STATE_DIR.mkdir(parents=True, exist_ok=True)
 SETTINGS_FILE = APP_STATE_DIR / "settings.json"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "output"
-CAPTION_ENV_DIR = APP_STATE_DIR / "captioning-env"
-CAPTION_ENV_DLL_HANDLES = []
 SHARED_AUTH_BASE_URL = str(
     os.environ.get("ALERT_ALERT_SHARED_AUTH_URL", "https://auth.deutschmark.online")
     or "https://auth.deutschmark.online"
@@ -384,12 +381,6 @@ YTDLP_UPDATE_STATE = {
     "last_error": None,
 }
 YTDLP_UPDATE_LOCK = threading.Lock()
-CAPTIONING_INSTALL_STATE = {
-    "status": "idle",  # idle | installing | ready | failed
-    "message": "",
-    "last_error": None,
-}
-CAPTIONING_INSTALL_LOCK = threading.Lock()
 
 
 def _set_bootstrap_state(status, message="", error=None):
@@ -404,10 +395,6 @@ def _set_ytdlp_update_state(status, message="", error=None):
     YTDLP_UPDATE_STATE["last_error"] = error
 
 
-def _set_captioning_install_state(status, message="", error=None):
-    CAPTIONING_INSTALL_STATE["status"] = status
-    CAPTIONING_INSTALL_STATE["message"] = message
-    CAPTIONING_INSTALL_STATE["last_error"] = error
 
 
 def _required_missing(results):
@@ -415,70 +402,6 @@ def _required_missing(results):
     return [name for name in required if not results.get(name, {}).get("installed")]
 
 
-def get_caption_dependency_status():
-    """Return install status for Reel Maker captioning dependencies."""
-    ensure_captioning_import_paths()
-    result = {}
-
-    try:
-        import faster_whisper
-        result["faster_whisper"] = {
-            "installed": True,
-            "version": getattr(faster_whisper, "__version__", "unknown"),
-            "present_on_disk": True,
-        }
-    except Exception as e:
-        result["faster_whisper"] = {
-            "installed": False,
-            "version": None,
-            "error": str(e),
-            "present_on_disk": _caption_package_present_on_disk("faster_whisper"),
-        }
-
-    try:
-        import torch
-        cuda_available = torch.cuda.is_available()
-        result["torch"] = {
-            "installed": True,
-            "version": torch.__version__,
-            "cuda": cuda_available,
-            "device": torch.cuda.get_device_name(0) if cuda_available else "CPU",
-            "present_on_disk": True,
-        }
-    except Exception as e:
-        result["torch"] = {
-            "installed": False,
-            "version": None,
-            "cuda": False,
-            "device": None,
-            "error": str(e),
-            "present_on_disk": _caption_package_present_on_disk("torch"),
-        }
-
-    try:
-        import pyannote.audio
-        result["pyannote_audio"] = {
-            "installed": True,
-            "version": getattr(pyannote.audio, "__version__", "unknown"),
-            "present_on_disk": True,
-        }
-    except Exception as e:
-        result["pyannote_audio"] = {
-            "installed": False,
-            "version": None,
-            "error": str(e),
-            "present_on_disk": _caption_package_present_on_disk("pyannote_audio"),
-        }
-
-    result["required_missing"] = [
-        name for name in ("faster_whisper", "torch")
-        if not result.get(name, {}).get("installed")
-    ]
-    result["optional_missing"] = [
-        name for name in ("pyannote_audio",)
-        if not result.get(name, {}).get("installed")
-    ]
-    return result
 
 
 def _build_deps_payload(results):
@@ -498,8 +421,6 @@ def _build_deps_payload(results):
     payload["bootstrap"] = dict(DEPS_BOOTSTRAP_STATE)
     payload["ytdlp_update"] = dict(YTDLP_UPDATE_STATE)
     payload["ytdlp_update_available"] = bool(results.get("yt-dlp", {}).get("installed"))
-    payload["captioning"] = get_caption_dependency_status()
-    payload["captioning_install"] = dict(CAPTIONING_INSTALL_STATE)
     return payload
 
 
@@ -707,296 +628,30 @@ def _get_python_for_pip():
     return None
 
 
-def _get_caption_env_python():
-    if platform.system() == "Windows":
-        return CAPTION_ENV_DIR / "Scripts" / "python.exe"
-    return CAPTION_ENV_DIR / "bin" / "python"
 
 
-def _get_caption_env_site_packages():
-    if platform.system() == "Windows":
-        return CAPTION_ENV_DIR / "Lib" / "site-packages"
-    return CAPTION_ENV_DIR / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
 
 
-def _caption_package_present_on_disk(name):
-    site_packages = _get_caption_env_site_packages()
-    if not site_packages.exists():
-        return False
-
-    probes = {
-        "faster_whisper": [
-            site_packages / "faster_whisper",
-            *site_packages.glob("faster_whisper-*.dist-info"),
-        ],
-        "torch": [
-            site_packages / "torch",
-            *site_packages.glob("torch-*.dist-info"),
-        ],
-        "pyannote_audio": [
-            site_packages / "pyannote",
-            *site_packages.glob("pyannote_audio-*.dist-info"),
-        ],
-    }
-    return any(path.exists() for path in probes.get(name, []))
 
 
-def _add_caption_runtime_dir(path):
-    if not path.exists():
-        return
-
-    path_str = str(path)
-    current_path = os.environ.get("PATH", "")
-    segments = current_path.split(os.pathsep) if current_path else []
-    if path_str not in segments:
-        os.environ["PATH"] = path_str + os.pathsep + current_path
-
-    if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
-        try:
-            handle = os.add_dll_directory(path_str)
-            CAPTION_ENV_DLL_HANDLES.append(handle)
-        except OSError:
-            pass
 
 
-def ensure_captioning_import_paths():
-    """Expose managed captioning site-packages to the current process."""
-    site_packages = _get_caption_env_site_packages()
-    if not site_packages.exists():
-        return
-
-    site_packages_str = str(site_packages)
-    if site_packages_str not in sys.path:
-        sys.path.insert(0, site_packages_str)
-
-    if platform.system() == "Windows":
-        runtime_dirs = [
-            site_packages / "torch" / "lib",
-            site_packages / "torch" / "bin",
-            site_packages / "torchaudio" / "lib",
-            site_packages / "torchcodec",
-            site_packages / "onnxruntime" / "capi",
-        ]
-        for runtime_dir in runtime_dirs:
-            _add_caption_runtime_dir(runtime_dir)
-
-    importlib.invalidate_caches()
 
 
-def _run_python_command(command_prefix, args, timeout=120):
-    return run_subprocess(list(command_prefix) + list(args), timeout=timeout)
 
 
-def _python_version_matches(command_prefix):
-    try:
-        result = _run_python_command(
-            command_prefix,
-            ["-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
-            timeout=20,
-        )
-        version_label = (result.stdout or "").strip()
-        expected = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return result.returncode == 0 and version_label == expected
-    except Exception:
-        return False
 
 
-def _find_python_command_for_captioning():
-    """Find a Python command matching the app runtime's major/minor version."""
-    env_python = _get_caption_env_python()
-    if env_python.exists():
-        return [str(env_python)]
-
-    candidates = []
-    if not getattr(sys, "frozen", False) and sys.executable:
-        candidates.append([sys.executable])
-
-    if platform.system() == "Windows":
-        version_flag = f"-{sys.version_info.major}.{sys.version_info.minor}"
-        candidates.extend([
-            ["py", version_flag],
-            ["python"],
-            ["python3"],
-            ["py"],
-        ])
-    else:
-        candidates.extend([
-            ["python3"],
-            ["python"],
-        ])
-
-    seen = set()
-    for candidate in candidates:
-        key = tuple(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        if _python_version_matches(candidate):
-            return candidate
-    return None
 
 
-def _ensure_captioning_env():
-    """Create a managed virtualenv for captioning dependencies and return its python executable."""
-    env_python = _get_caption_env_python()
-    if env_python.exists():
-        return [str(env_python)]
-
-    python_cmd = _find_python_command_for_captioning()
-    if not python_cmd:
-        expected = f"{sys.version_info.major}.{sys.version_info.minor}"
-        raise RuntimeError(
-            f"Python {expected} is required for captioning install. "
-            f"Install Python {expected} and retry."
-        )
-
-    CAPTION_ENV_DIR.mkdir(parents=True, exist_ok=True)
-    create_result = _run_python_command(
-        python_cmd,
-        ["-m", "venv", str(CAPTION_ENV_DIR)],
-        timeout=300,
-    )
-    if create_result.returncode != 0 or not env_python.exists():
-        error = (create_result.stderr or create_result.stdout or "Failed to create captioning environment").strip()
-        raise RuntimeError(error)
-
-    ensurepip_result = _run_python_command([str(env_python)], ["-m", "ensurepip", "--upgrade"], timeout=180)
-    if ensurepip_result.returncode != 0:
-        error = (ensurepip_result.stderr or ensurepip_result.stdout or "ensurepip failed").strip()
-        raise RuntimeError(error)
-
-    return [str(env_python)]
 
 
-def _validate_captioning_runtime(include_pyannote=False):
-    status = get_caption_dependency_status()
-    required = ["faster_whisper", "torch"]
-    optional = ["pyannote_audio"] if include_pyannote else []
-    missing = [
-        name for name in required + optional
-        if not status.get(name, {}).get("installed")
-    ]
-    if missing:
-        error_lines = []
-        for name in missing:
-            detail = status.get(name, {}).get("error")
-            present_on_disk = bool(status.get(name, {}).get("present_on_disk"))
-            if detail:
-                detail_lower = str(detail).lower()
-                extra_notes = []
-                if present_on_disk:
-                    extra_notes.append(
-                        "Package files exist in the managed captioning environment, so this is now a runtime import issue."
-                    )
-                if getattr(sys, "frozen", False) and "no module named 'plistlib'" in detail_lower:
-                    extra_notes.append(
-                        "This desktop build is missing Python's plistlib module. Rebuild or reinstall the desktop app with the updated captioning runtime packaging fix."
-                    )
-                if extra_notes:
-                    detail = f"{detail} {' '.join(extra_notes)}"
-                error_lines.append(f"{name}: {detail}")
-        detail_text = " ".join(error_lines).strip()
-        if detail_text:
-            raise RuntimeError(detail_text)
-        raise RuntimeError(f"Missing modules after install: {', '.join(missing)}")
-    return status
 
 
-def _get_caption_packages_to_install(include_pyannote=False):
-    status = get_caption_dependency_status()
-    packages = []
-    if not status.get("faster_whisper", {}).get("installed"):
-        packages.append("faster-whisper")
-    if not status.get("torch", {}).get("installed"):
-        packages.append("torch")
-    if include_pyannote and not status.get("pyannote_audio", {}).get("installed"):
-        packages.append("pyannote.audio")
-    return packages
 
 
-def _run_captioning_install(include_pyannote=False):
-    """Worker for installing captioning packages into the managed environment."""
-    with CAPTIONING_INSTALL_LOCK:
-        try:
-            python_cmd = _ensure_captioning_env()
-            python_exe = python_cmd[0]
-
-            target_label = "pyannote.audio" if include_pyannote else "faster-whisper + torch"
-            packages = _get_caption_packages_to_install(include_pyannote=include_pyannote)
-            if not packages:
-                ensure_captioning_import_paths()
-                _validate_captioning_runtime(include_pyannote=include_pyannote)
-                _set_captioning_install_state("ready", f"{target_label} already installed. Captioning is ready.")
-                return
-
-            label = " + ".join(packages)
-            _set_captioning_install_state("installing", f"Installing {label}...")
-            print(f"Captioning install: {' '.join(python_cmd)} -m pip install --upgrade --prefer-binary {' '.join(packages)}")
-
-            extra = {}
-            if platform.system() == "Windows":
-                extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            bootstrap = subprocess.run(
-                [python_exe, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
-                capture_output=True,
-                text=True,
-                timeout=600,
-                **extra,
-            )
-            if bootstrap.returncode != 0:
-                error = (bootstrap.stderr or bootstrap.stdout or "pip bootstrap failed").strip()
-                print(f"Captioning bootstrap failed: {error}")
-                _set_captioning_install_state("failed", "Install failed.", error)
-                return
-
-            result = subprocess.run(
-                [python_exe, "-m", "pip", "install", "--upgrade", "--prefer-binary"] + packages,
-                capture_output=True,
-                text=True,
-                timeout=1800,
-                **extra,
-            )
-            if result.returncode != 0:
-                error = (result.stderr or result.stdout or "pip install failed").strip()
-                print(f"Captioning install failed: {error}")
-                _set_captioning_install_state("failed", "Install failed.", error)
-            else:
-                ensure_captioning_import_paths()
-                _validate_captioning_runtime(include_pyannote=include_pyannote)
-                _set_captioning_install_state("ready", f"Installed: {label}. Captioning is ready.")
-                print(f"Captioning install succeeded: {label}")
-        except subprocess.TimeoutExpired:
-            _set_captioning_install_state("failed", "Install timed out.", "pip install exceeded 30-minute timeout")
-        except Exception as e:
-            _set_captioning_install_state("failed", "Install failed.", str(e))
 
 
-def install_captioning_deps_one_click(include_pyannote=False):
-    """Start captioning dependency install if one is not already running."""
-    if CAPTIONING_INSTALL_STATE.get("status") == "installing":
-        return False
-
-    target_label = "pyannote.audio" if include_pyannote else "faster-whisper + torch"
-    packages = _get_caption_packages_to_install(include_pyannote=include_pyannote)
-    if not packages:
-        try:
-            ensure_captioning_import_paths()
-            _validate_captioning_runtime(include_pyannote=include_pyannote)
-            _set_captioning_install_state("ready", f"{target_label} already installed. Captioning is ready.")
-        except Exception as e:
-            _set_captioning_install_state("failed", "Install failed.", str(e))
-        return False
-
-    label = " + ".join(packages)
-    _set_captioning_install_state("installing", f"Installing {label}...")
-    thread = threading.Thread(
-        target=_run_captioning_install,
-        kwargs={"include_pyannote": include_pyannote},
-        daemon=True,
-    )
-    thread.start()
-    return True
 
 
 @app.route("/api/check-deps")
@@ -1016,15 +671,6 @@ def bootstrap_deps():
 @app.route("/api/update-ytdlp", methods=["POST"])
 def update_ytdlp():
     results = update_ytdlp_one_click()
-    return jsonify(_build_deps_payload(results))
-
-
-@app.route("/api/install-captioning-deps", methods=["POST"])
-def install_captioning_deps_route():
-    data = request.get_json(silent=True) or {}
-    include_pyannote = bool(data.get("include_pyannote", False))
-    install_captioning_deps_one_click(include_pyannote=include_pyannote)
-    results = run_deps_check()
     return jsonify(_build_deps_payload(results))
 
 
