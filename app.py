@@ -1118,32 +1118,6 @@ def get_waveform(job_id):
     return send_file(str(waveform_path), mimetype="image/png")
 
 
-@app.route("/api/serve-clip/<job_id>")
-def serve_clip(job_id):
-    if not is_safe_job_id(job_id):
-        return jsonify({"error": "Invalid job_id"}), 400
-    job_dir = DOWNLOADS_DIR / job_id
-    files = list(job_dir.glob("clip.*"))
-    if not files:
-        return jsonify({"error": "File not found"}), 404
-    clip_path = files[0]
-    mimetype, _ = mimetypes.guess_type(str(clip_path))
-    return send_file(str(clip_path), mimetype=mimetype or "application/octet-stream")
-
-
-@app.route("/api/serve-audio/<job_id>")
-def serve_audio(job_id):
-    if not is_safe_job_id(job_id):
-        return jsonify({"error": "Invalid job_id"}), 400
-    job_dir = DOWNLOADS_DIR / job_id
-    files = list(job_dir.glob("audio.*"))
-    if not files:
-        return jsonify({"error": "Audio file not found"}), 404
-    audio_path = files[0]
-    mimetype, _ = mimetypes.guess_type(str(audio_path))
-    return send_file(str(audio_path), mimetype=mimetype or "application/octet-stream")
-
-
 @app.route("/api/download-result/<job_id>")
 def download_result(job_id):
     if not is_safe_job_id(job_id):
