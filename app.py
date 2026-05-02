@@ -16,6 +16,14 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
+from ytdlp import (
+    build_ytdlp_profiles,
+    looks_like_age_restricted_issue,
+    looks_like_youtube_challenge_issue,
+    run_ytdlp_with_retries,
+    summarize_ytdlp_error,
+)
+
 import sys
 import webbrowser
 import functools
@@ -754,51 +762,6 @@ def is_youtube_url(url):
         return False
 
 
-def summarize_ytdlp_error(stderr_text):
-    """Return a concise yt-dlp error message from stderr."""
-    if not stderr_text:
-        return "Download failed"
-
-    lines = [ln.strip() for ln in stderr_text.splitlines() if ln.strip()]
-    error_lines = [ln for ln in lines if ln.startswith("ERROR:")]
-    if error_lines:
-        return error_lines[-1]
-
-    warn_lines = [ln for ln in lines if ln.startswith("WARNING:")]
-    if warn_lines:
-        return warn_lines[-1]
-
-    return lines[-1] if lines else "Download failed"
-
-
-def looks_like_youtube_challenge_issue(stderr_text):
-    s = (stderr_text or "").lower()
-    markers = [
-        "sabr",
-        "forbidden",
-        "http error 403",
-        "signature solving failed",
-        "n challenge solving failed",
-        "requested format is not available",
-        "only images are available for download",
-        "po token",
-        "remote components challenge solver",
-    ]
-    return any(m in s for m in markers)
-
-
-def looks_like_age_restricted_issue(stderr_text):
-    s = (stderr_text or "").lower()
-    markers = [
-        "age-restricted",
-        "sign in to confirm your age",
-        "confirm your age",
-        "this video may be inappropriate",
-        "this content may be inappropriate",
-    ]
-    return any(m in s for m in markers)
-
-
 def has_deno_runtime():
     return DENO != "deno"
 
@@ -951,72 +914,6 @@ def download_separate_audio(job_dir, audio_url, audio_start_sec=None, audio_end_
         and audio_end_sec > audio_start_sec
     )
 
-    def build_profiles():
-        if not youtube:
-            return [
-                {"name": "standard", "format": "bestaudio/b", "sort": "abr", "extra": []},
-                {"name": "compatibility", "format": "b/bestaudio", "sort": None, "extra": []},
-            ]
-
-        progressive_audio = "ba[ext=m4a]/bestaudio/b"
-        profiles = [
-            {
-                "name": "web client",
-                "format": progressive_audio,
-                "sort": "ext:m4a,abr",
-                "extra": ["--extractor-args", "youtube:player_client=web"],
-            },
-            {
-                "name": "android client",
-                "format": progressive_audio,
-                "sort": "ext:m4a,abr",
-                "extra": ["--extractor-args", "youtube:player_client=android"],
-            },
-            {
-                "name": "mweb client",
-                "format": progressive_audio,
-                "sort": "ext:m4a,abr",
-                "extra": ["--extractor-args", "youtube:player_client=mweb"],
-            },
-            {
-                "name": "tv embedded client",
-                "format": progressive_audio,
-                "sort": "ext:m4a,abr",
-                "extra": ["--extractor-args", "youtube:player_client=tv_embedded,web"],
-            },
-        ]
-
-        if has_deno_runtime():
-            profiles.append(
-                {
-                    "name": "web + challenge solver",
-                    "format": progressive_audio,
-                    "sort": "ext:m4a,abr",
-                    "extra": [
-                        "--remote-components", "ejs:github",
-                        "--extractor-args", "youtube:player_client=web",
-                    ],
-                }
-            )
-
-        for browser in ["chrome", "edge", "firefox"]:
-            profiles.append(
-                {
-                    "name": f"{browser} cookies",
-                    "format": progressive_audio,
-                    "sort": "ext:m4a,abr",
-                    "extra": [
-                        "--cookies-from-browser", browser,
-                        "--extractor-args", "youtube:player_client=web",
-                    ],
-                }
-            )
-
-        profiles.append(
-            {"name": "compatibility format", "format": "b/bestaudio", "sort": None, "extra": []}
-        )
-        return profiles
-
     def build_audio_cmd(profile, use_sections):
         cmd = [
             YTDLP,
@@ -1040,26 +937,18 @@ def download_separate_audio(job_dir, audio_url, audio_start_sec=None, audio_end_
         return cmd
 
     section_modes = [True, False] if section_requested else [False]
-    profiles = build_profiles()
-    last_error = "Audio download failed"
-    last_stderr = ""
-    success = False
-
-    for use_sections in section_modes:
-        for profile in profiles:
-            for old_audio in job_dir.glob("audio.*"):
-                old_audio.unlink(missing_ok=True)
-
-            r = run_subprocess(build_audio_cmd(profile, use_sections), timeout=300)
-            if r.returncode == 0:
-                success = True
-                break
-
-            last_stderr = r.stderr or ""
-            last_error = summarize_ytdlp_error(last_stderr)
-
-        if success:
-            break
+    profiles = build_ytdlp_profiles("audio", youtube=youtube, has_deno=has_deno_runtime())
+    success, last_stderr, last_error = run_ytdlp_with_retries(
+        job_dir,
+        file_glob="audio.*",
+        build_cmd=build_audio_cmd,
+        profiles=profiles,
+        section_modes=section_modes,
+        run_subprocess=run_subprocess,
+        timeout=300,
+        default_error="Audio download failed",
+        clean_first_attempt=True,
+    )
 
     if not success:
         if youtube:
