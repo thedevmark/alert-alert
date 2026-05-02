@@ -3,12 +3,18 @@
 import json
 import uuid
 import mimetypes
-import platform
 import subprocess
 import threading
 from pathlib import Path
 
 from flask import request, jsonify, send_file
+
+from ytdlp import (
+    build_ytdlp_profiles,
+    looks_like_age_restricted_issue,
+    looks_like_youtube_challenge_issue,
+    run_ytdlp_with_retries,
+)
 
 
 def register_alert_routes(app):
@@ -32,9 +38,6 @@ def register_alert_routes(app):
         clean_video_url,
         is_youtube_url,
         has_deno_runtime,
-        summarize_ytdlp_error,
-        looks_like_youtube_challenge_issue,
-        looks_like_age_restricted_issue,
         parse_timestamp_to_seconds,
         probe_media_duration,
         download_separate_audio,
@@ -52,79 +55,6 @@ def register_alert_routes(app):
 
             output_template = str(job_dir / "clip.%(ext)s")
             youtube = is_youtube_url(url)
-
-            def build_profiles():
-                if not youtube:
-                    return [
-                        {"name": "standard", "format": "bv*+ba/b", "sort": "res", "extra": []},
-                        {"name": "compatibility", "format": "b/bv*+ba", "sort": None, "extra": []},
-                    ]
-
-                progressive_format = "b[ext=mp4]/b[ext=webm]/b"
-                merged_format = "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
-                profiles = [
-                    {
-                        "name": "web progressive",
-                        "format": progressive_format,
-                        "sort": "res,ext:mp4:m4a",
-                        "extra": ["--extractor-args", "youtube:player_client=web"],
-                    },
-                    {
-                        "name": "android progressive",
-                        "format": progressive_format,
-                        "sort": "res,ext:mp4:m4a",
-                        "extra": ["--extractor-args", "youtube:player_client=android"],
-                    },
-                    {
-                        "name": "mweb progressive",
-                        "format": progressive_format,
-                        "sort": "res,ext:mp4:m4a",
-                        "extra": ["--extractor-args", "youtube:player_client=mweb"],
-                    },
-                    {
-                        "name": "tv embedded progressive",
-                        "format": progressive_format,
-                        "sort": "res,ext:mp4:m4a",
-                        "extra": ["--extractor-args", "youtube:player_client=tv_embedded,web"],
-                    },
-                    {
-                        "name": "web adaptive merge",
-                        "format": merged_format,
-                        "sort": "res,ext:mp4:m4a",
-                        "extra": ["--extractor-args", "youtube:player_client=web"],
-                    },
-                ]
-
-                if has_deno_runtime():
-                    profiles.append(
-                        {
-                            "name": "web progressive + challenge solver",
-                            "format": progressive_format,
-                            "sort": "res,ext:mp4:m4a",
-                            "extra": [
-                                "--remote-components", "ejs:github",
-                                "--extractor-args", "youtube:player_client=web",
-                            ],
-                        }
-                    )
-
-                for browser in ["chrome", "edge", "firefox"]:
-                    profiles.append(
-                        {
-                            "name": f"{browser} cookies progressive",
-                            "format": progressive_format,
-                            "sort": "res,ext:mp4:m4a",
-                            "extra": [
-                                "--cookies-from-browser", browser,
-                                "--extractor-args", "youtube:player_client=web",
-                            ],
-                        }
-                    )
-
-                profiles.append(
-                    {"name": "compatibility adaptive", "format": merged_format, "sort": None, "extra": []}
-                )
-                return profiles
 
             def build_video_download_cmd(profile, use_sections):
                 cmd = [
@@ -149,38 +79,29 @@ def register_alert_routes(app):
             # For full downloads (start at 0), avoid section-based ffmpeg URL reads.
             can_section_download = end_sec is not None and end_sec > start_sec
             section_modes = [True, False] if start_sec > 0 and can_section_download else [False]
-            profiles = build_profiles()
+            profiles = build_ytdlp_profiles("video", youtube=youtube, has_deno=has_deno_runtime())
             total_attempts = len(section_modes) * len(profiles)
-            attempt_idx = 0
 
-            last_error = "Download failed"
-            last_stderr = ""
-            success = False
+            def _update_job_stage(attempt_idx, total, profile, use_sections):
+                mode_label = "sectioned" if use_sections else "full"
+                jobs[job_id] = {
+                    "status": "downloading",
+                    "progress": min(5 + int((attempt_idx - 1) * 40 / max(1, total - 1)), 50),
+                    "stage": f"Downloading video ({attempt_idx}/{total}) [{mode_label}, {profile['name']}]...",
+                }
 
-            for use_sections in section_modes:
-                for profile in profiles:
-                    attempt_idx += 1
-                    if attempt_idx > 1:
-                        for old_clip in job_dir.glob("clip.*"):
-                            old_clip.unlink(missing_ok=True)
-
-                    mode_label = "sectioned" if use_sections else "full"
-                    jobs[job_id] = {
-                        "status": "downloading",
-                        "progress": min(5 + int((attempt_idx - 1) * 40 / max(1, total_attempts - 1)), 50),
-                        "stage": f"Downloading video ({attempt_idx}/{total_attempts}) [{mode_label}, {profile['name']}]...",
-                    }
-
-                    r = run_subprocess(build_video_download_cmd(profile, use_sections), timeout=360)
-                    if r.returncode == 0:
-                        success = True
-                        break
-
-                    last_stderr = r.stderr or ""
-                    last_error = summarize_ytdlp_error(last_stderr)
-
-                if success:
-                    break
+            success, last_stderr, last_error = run_ytdlp_with_retries(
+                job_dir,
+                file_glob="clip.*",
+                build_cmd=build_video_download_cmd,
+                profiles=profiles,
+                section_modes=section_modes,
+                run_subprocess=run_subprocess,
+                timeout=360,
+                default_error="Download failed",
+                on_attempt=_update_job_stage,
+                clean_first_attempt=False,
+            )
 
             if not success:
                 if youtube:
@@ -751,19 +672,10 @@ def register_alert_routes(app):
         print(f"Upload job {job_id}: saved {file.filename}")
 
         try:
-            kwargs = {
-                "capture_output": True,
-                "text": True,
-                "timeout": 15,
-                "env": get_env()
-            }
-            if platform.system() == "Windows":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            r = subprocess.run(
+            r = run_subprocess(
                 [FFPROBE, "-v", "quiet", "-print_format", "json",
                  "-show_format", str(save_path)],
-                **kwargs
+                timeout=15,
             )
             info = json.loads(r.stdout)
             duration = float(info.get("format", {}).get("duration", 0))
@@ -795,21 +707,12 @@ def register_alert_routes(app):
 
         input_file = str(files[0])
         try:
-            kwargs = {
-                "capture_output": True,
-                "text": True,
-                "timeout": 15,
-                "env": get_env()
-            }
-            if platform.system() == "Windows":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            r = subprocess.run(
+            r = run_subprocess(
                 [
                     FFPROBE, "-v", "quiet", "-print_format", "json",
                     "-show_streams", "-show_format", input_file,
                 ],
-                **kwargs
+                timeout=15,
             )
             info = json.loads(r.stdout)
             video_stream = next(
