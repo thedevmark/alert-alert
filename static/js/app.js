@@ -2176,14 +2176,24 @@ const App = (() => {
         const video = document.getElementById("crop-video");
         video.loop = false;
 
+        const targetUrl = sourceUrl || `/api/serve-clip/${jobId}?t=${Date.now()}`;
+        const MEDIA_ERROR_HINT = {
+            1: "playback aborted",
+            2: "network error",
+            3: "decode error (codec not supported by this build of QtWebEngine — verify the EXE was built with PySide6 ≥ 6.4 and proprietary codecs)",
+            4: "source not supported (404, MIME mismatch, or unsupported codec)",
+        };
+
         video.onerror = () => {
-            console.error("Video load error");
-            showError("step2-error", "Failed to load video preview.");
+            const err = video.error;
+            const code = err?.code;
+            const detail = MEDIA_ERROR_HINT[code] || `unknown (code=${code})`;
+            console.error("Video load error", { code, message: err?.message, src: targetUrl, networkState: video.networkState, readyState: video.readyState });
+            showError("step2-error", `Failed to load video preview: ${detail}.`);
         };
 
         // Start loading
-        const defaultUrl = `/api/serve-clip/${jobId}?t=${Date.now()}`;
-        video.src = sourceUrl || defaultUrl;
+        video.src = targetUrl;
 
         video.onloadedmetadata = () => {
             // Re-apply slider volume to the newly loaded media.
