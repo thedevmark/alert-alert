@@ -8,6 +8,10 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+# Allow attaching Chrome DevTools at http://localhost:9222 when ALERT_ALERT_DEBUG=1.
+if os.environ.get("ALERT_ALERT_DEBUG"):
+    os.environ.setdefault("QTWEBENGINE_REMOTE_DEBUGGING", "9222")
+
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QStatusBar
