@@ -3,7 +3,6 @@
 import json
 import uuid
 import mimetypes
-import platform
 import subprocess
 import threading
 from pathlib import Path
@@ -673,19 +672,10 @@ def register_alert_routes(app):
         print(f"Upload job {job_id}: saved {file.filename}")
 
         try:
-            kwargs = {
-                "capture_output": True,
-                "text": True,
-                "timeout": 15,
-                "env": get_env()
-            }
-            if platform.system() == "Windows":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            r = subprocess.run(
+            r = run_subprocess(
                 [FFPROBE, "-v", "quiet", "-print_format", "json",
                  "-show_format", str(save_path)],
-                **kwargs
+                timeout=15,
             )
             info = json.loads(r.stdout)
             duration = float(info.get("format", {}).get("duration", 0))
@@ -717,21 +707,12 @@ def register_alert_routes(app):
 
         input_file = str(files[0])
         try:
-            kwargs = {
-                "capture_output": True,
-                "text": True,
-                "timeout": 15,
-                "env": get_env()
-            }
-            if platform.system() == "Windows":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            r = subprocess.run(
+            r = run_subprocess(
                 [
                     FFPROBE, "-v", "quiet", "-print_format", "json",
                     "-show_streams", "-show_format", input_file,
                 ],
-                **kwargs
+                timeout=15,
             )
             info = json.loads(r.stdout)
             video_stream = next(
