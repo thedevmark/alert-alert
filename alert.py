@@ -1049,6 +1049,8 @@ def register_alert_routes(app):
 
     @app.route("/api/load-separate-audio/<job_id>", methods=["POST"])
     def load_separate_audio(job_id):
+        if not is_safe_job_id(job_id):
+            return jsonify({"error": "Invalid job_id"}), 400
         job_dir = DOWNLOADS_DIR / job_id
         if not job_dir.exists():
             return jsonify({"error": "Load the main video first."}), 400
@@ -1118,6 +1120,8 @@ def register_alert_routes(app):
 
     @app.route("/api/serve-audio/<job_id>")
     def serve_audio(job_id):
+        if not is_safe_job_id(job_id):
+            return jsonify({"error": "Invalid job_id"}), 400
         job_dir = DOWNLOADS_DIR / job_id
         files = list(job_dir.glob("audio.*"))
         if not files:
