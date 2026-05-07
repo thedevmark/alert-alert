@@ -15,7 +15,7 @@ if os.environ.get("ALERT_ALERT_DEBUG"):
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QStatusBar
-from PySide6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEnginePage
+from PySide6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEnginePage, QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from app import DEFAULT_APP_PORT, INTERNAL_DIR, find_available_port, get_output_dir, start_server
@@ -81,7 +81,14 @@ class DesktopWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         self.view = QWebEngineView(self)
-        self.page = DesktopPage(self.view)
+        # Off-the-record profile: no persistent cookies, cache, or history.
+        # Prevents leftover state from prior installs (e.g. cached toolkit
+        # auth pages) from leaking into the embedded app, and forces fresh
+        # loads of static assets on every launch.
+        self.profile = QWebEngineProfile(self.view)
+        self.profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
+        self.profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+        self.page = DesktopPage(self.profile, self.view)
         self.view.setPage(self.page)
         self.setCentralWidget(self.view)
         self._build_menubar()

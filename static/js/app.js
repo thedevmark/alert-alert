@@ -2135,7 +2135,12 @@ const App = (() => {
 
         audioPreview.ontimeupdate = () => {
             if (!audioPreview.paused && audioPreview.currentTime >= trimEnd) {
-                audioPreview.currentTime = trimStart;
+                if (audioPreview.loop) {
+                    audioPreview.currentTime = trimStart;
+                } else {
+                    audioPreview.pause();
+                    audioPreview.currentTime = trimEnd;
+                }
             }
             syncSeparateAudioWithVideo(false);
             updatePreviewTimelineFromCurrentTime();
@@ -2144,7 +2149,9 @@ const App = (() => {
             audioPreview.currentTime = trimStart;
             syncSeparateAudioWithVideo(true);
             updatePreviewTimelineFromCurrentTime();
-            audioPreview.play().catch(() => { });
+            if (audioPreview.loop) {
+                audioPreview.play().catch(() => { });
+            }
         };
 
         // Immediate fallback duration so sliders are usable before metadata resolves.
@@ -2216,10 +2223,15 @@ const App = (() => {
             if (jobId) loadWaveform(jobId);
         };
 
-        // Handle looping within trim region
+        // Handle looping within trim region (only when loop toggle is active)
         video.ontimeupdate = () => {
             if (!video.paused && video.currentTime >= trimEnd) {
-                video.currentTime = trimStart;
+                if (video.loop) {
+                    video.currentTime = trimStart;
+                } else {
+                    video.pause();
+                    video.currentTime = trimEnd;
+                }
             }
             syncSeparateAudioWithVideo(false);
             updatePreviewTimelineFromCurrentTime();
@@ -2230,7 +2242,9 @@ const App = (() => {
             video.currentTime = trimStart;
             syncSeparateAudioWithVideo(true);
             updatePreviewTimelineFromCurrentTime();
-            video.play().catch(() => { });
+            if (video.loop) {
+                video.play().catch(() => { });
+            }
         };
     }
 

@@ -41,6 +41,8 @@ else:
     BASE_DIR = INTERNAL_DIR
 
 app = Flask(__name__, static_folder=str(INTERNAL_DIR / "static"))
+# Don't let browsers / QtWebEngine hold onto stale frontend assets across builds.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 TEMP_DIR = BASE_DIR / "temp"
 DOWNLOADS_DIR = TEMP_DIR / "downloads"
@@ -288,7 +290,11 @@ def probe_media_duration(input_path):
 
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    response = send_from_directory("static", "index.html")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.route("/favicon.ico")
 def favicon():
