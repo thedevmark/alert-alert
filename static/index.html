@@ -104,25 +104,6 @@
         <p id="dep-instructions" class="dep-instructions"></p>
     </div>
 
-    <!-- Onboarding Overlay -->
-    <div id="onboarding-overlay" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-        <div class="onboarding-card">
-            <button class="onboarding-skip" id="onboarding-skip-btn" onclick="App.skipOnboarding()" title="Skip tour" aria-label="Skip tour">Skip</button>
-            <div class="onboarding-progress-bar">
-                <div class="onboarding-progress-fill" id="onboarding-progress-fill"></div>
-            </div>
-            <div class="onboarding-step-label" id="onboarding-step-label">Step 1 of 4</div>
-            <div class="onboarding-icon-wrap" id="onboarding-icon" aria-hidden="true"></div>
-            <h2 class="onboarding-title" id="onboarding-title"></h2>
-            <p class="onboarding-body" id="onboarding-body"></p>
-            <div id="onboarding-content-area"></div>
-            <div class="onboarding-nav">
-                <button class="onboarding-back-btn hidden" id="onboarding-back-btn" onclick="App.onboardingBack()">Back</button>
-                <button class="onboarding-next-btn" id="onboarding-next-btn" onclick="App.onboardingNext()">Next</button>
-            </div>
-        </div>
-    </div>
-
     <main class="main-layout" id="alert-workflow">
         <!-- Floating Video Preview (appears after validation) -->
         <aside class="video-sidebar hidden" id="video-sidebar">
@@ -443,9 +424,6 @@
         function switchMode(_mode) {
             const alertWorkflow = document.getElementById('alert-workflow');
             if (alertWorkflow) alertWorkflow.classList.remove('hidden');
-            if (typeof App !== "undefined" && typeof App.checkOnboardingForMode === "function") {
-                App.checkOnboardingForMode("alert");
-            }
         }
         document.addEventListener("DOMContentLoaded", () => switchMode("alert"));
     </script>

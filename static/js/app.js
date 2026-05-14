@@ -26,56 +26,6 @@ const App = (() => {
     let dependencyInstallInFlight = false;
     let dependencyUpdateInFlight = false;
     let lastDeps = null;
-    let onboardingFlow = null;
-    let onboardingStep = 0;
-
-    const ONBOARDING_FLOWS = {
-        alert: [
-            {
-                title: "Welcome To Alert! Alert!",
-                body: "The fast utility for turning one source into one finished alert clip. One source in, one file out — no multi-clip timeline.",
-                features: [
-                    "Download a source from a URL or load one local video file",
-                    "Replace the original audio with a second URL or local audio file",
-                    "Normalize loudness, add fades, and trim the replacement audio",
-                    "Swap in a different image or video and export a finished alert clip",
-                ],
-            },
-            {
-                title: "Install Required Tools",
-                body: "Install the core download and processing tools once. After that, Alert! Alert! can download and process clips locally.",
-                isRuntimeStep: true,
-            },
-            {
-                title: "Load The Clip You Want To Work From",
-                body: "Paste a video URL or choose a local file. The source opens directly in preview so you can trim immediately.",
-                features: [
-                    "Works with YouTube, Twitch, TikTok, and other supported URLs",
-                    "Local files work too when you already have the source on disk",
-                ],
-            },
-            {
-                title: "Shape The Clip And Audio",
-                body: "Set the crop, trim range, and audio options in one pass.",
-                features: [
-                    "Crop for square, widescreen, vertical, or custom framing",
-                    "Add an end-buffer freeze frame for alert timing",
-                    "Replace audio, trim the audio range, and keep it in sync",
-                    "Normalize levels so the export lands at a more consistent volume",
-                ],
-            },
-            {
-                title: "Process And Export",
-                body: "Render the finished MP4 and drop it into OBS, your stream deck, Discord, or wherever the alert lives.",
-                features: [
-                    "Stream Alert, Shorts, Discord, and higher-quality export presets",
-                    "Saves to your configured output folder",
-                ],
-                isLast: true,
-                doneLabel: "Get Started",
-            },
-        ],
-    };
     let dependencyDropdownCloseHandlersBound = false;
     let dependencyBannerTimer = null;
     let storageConfig = null;
@@ -816,150 +766,10 @@ const App = (() => {
     }
 
     // ── Onboarding ───────────────────────────────────────────────
-
-    function showOnboarding(flow, options = {}) {
-        const startStep = Number(options.step || 0);
-        onboardingFlow = flow;
-        onboardingStep = Math.max(0, Math.min(startStep, (ONBOARDING_FLOWS[flow] || []).length - 1));
-        renderOnboardingStep();
-        const overlay = $("onboarding-overlay");
-        if (overlay) overlay.classList.remove("hidden");
-    }
-
-    function skipOnboarding() {
-        const overlay = $("onboarding-overlay");
-        if (overlay) overlay.classList.add("hidden");
-        markOnboardingDone(onboardingFlow);
-        onboardingFlow = null;
-    }
-
-    function markOnboardingDone(flow) {
-        if (flow) localStorage.setItem(`onboarding_${flow}_done`, "1");
-    }
-
-    function onboardingNext() {
-        const flow = ONBOARDING_FLOWS[onboardingFlow];
-        if (!flow) return;
-        const step = flow[onboardingStep];
-        if (step && step.isLast) {
-            markOnboardingDone(onboardingFlow);
-            const overlay = $("onboarding-overlay");
-            if (overlay) overlay.classList.add("hidden");
-            onboardingFlow = null;
-            return;
-        }
-        onboardingStep = Math.min(onboardingStep + 1, flow.length - 1);
-        renderOnboardingStep();
-    }
-
-    function onboardingBack() {
-        if (onboardingStep > 0) {
-            onboardingStep--;
-            renderOnboardingStep();
-        }
-    }
-
-    function restartOnboarding() {
-        setPanelOpen("dependency-settings-panel", false);
-        showOnboarding("alert", { step: 0 });
-    }
-
-    function checkOnboardingForMode(mode) {
-        if (onboardingFlow) return;
-        if (!localStorage.getItem(`onboarding_${mode}_done`)) {
-            showOnboarding(mode, { step: 0 });
-        }
-    }
-
-    function renderOnboardingStep() {
-        const flow = ONBOARDING_FLOWS[onboardingFlow];
-        if (!flow) return;
-        const step = flow[onboardingStep];
-        const total = flow.length;
-        const current = onboardingStep + 1;
-
-        const progressFill = $("onboarding-progress-fill");
-        if (progressFill) progressFill.style.width = `${(current / total) * 100}%`;
-
-        const stepLabel = $("onboarding-step-label");
-        if (stepLabel) stepLabel.textContent = `Step ${current} of ${total}`;
-
-        const icon = $("onboarding-icon");
-        if (icon) {
-            const iconText = String(step.icon || "").trim();
-            icon.textContent = iconText;
-            icon.classList.toggle("hidden", !iconText);
-        }
-
-        const title = $("onboarding-title");
-        if (title) title.textContent = step.title;
-
-        const body = $("onboarding-body");
-        if (body) body.textContent = step.body;
-
-        const contentArea = $("onboarding-content-area");
-        if (contentArea) {
-            if (step.isRuntimeStep) {
-                contentArea.innerHTML = buildOnboardingRuntimeHtml();
-            } else if (step.features) {
-                contentArea.innerHTML = `<div class="onboarding-features">${
-                    step.features.map(f => `<div class="onboarding-feature"><div class="onboarding-feature-dot"></div><span>${escapeHtml(f)}</span></div>`).join("")
-                }</div>`;
-            } else {
-                contentArea.innerHTML = "";
-            }
-        }
-
-        const backBtn = $("onboarding-back-btn");
-        if (backBtn) backBtn.classList.toggle("hidden", onboardingStep === 0);
-
-        const nextBtn = $("onboarding-next-btn");
-        if (nextBtn) {
-            nextBtn.disabled = false;
-            nextBtn.textContent = step.isLast ? (step.doneLabel || "Done") : "Next";
-        }
-    }
-
-    function buildOnboardingRuntimeHtml() {
-        const ffmpegOk = lastDeps?.ffmpeg?.installed && lastDeps?.ffprobe?.installed;
-        const ytdlpOk  = !!lastDeps?.["yt-dlp"]?.installed;
-        const allOk    = ffmpegOk && ytdlpOk;
-        const busy     = dependencyInstallInFlight || lastDeps?.bootstrap?.status === "installing";
-
-        const rows = [
-            { name: "FFmpeg / ffprobe", installed: ffmpegOk, label: ffmpegOk ? "Installed" : "Missing" },
-            { name: "yt-dlp",           installed: ytdlpOk,  label: ytdlpOk  ? "Installed" : "Missing" },
-        ];
-
-        const rowsHtml = rows.map(r => `
-            <div class="onboarding-dep-row">
-                <span class="onboarding-dep-name">${escapeHtml(r.name)}</span>
-                <span class="onboarding-dep-status ${r.installed ? "installed" : "missing"}">${escapeHtml(r.label)}</span>
-            </div>`).join("");
-
-        const installBtn = !allOk ? `
-            <button class="onboarding-install-btn" onclick="App.onboardingInstallRuntime()" ${busy ? "disabled" : ""}>
-                ${busy ? "Installing Tools..." : "Install Required Tools"}
-            </button>` : "";
-
-        const note = allOk
-            ? `<p class="onboarding-skip-note success">All required tools are installed. You can move on.</p>`
-            : `<p class="onboarding-skip-note">Downloads into the app folder. No admin setup is required.</p>`;
-
-        return `<div class="onboarding-deps-box">${rowsHtml}</div>${installBtn}${note}`;
-    }
-
-    async function onboardingInstallRuntime() {
-        dependencyInstallInFlight = true;
-        renderOnboardingStep();
-        try {
-            const deps = await api("/api/bootstrap-deps", { method: "POST" });
-            lastDeps = deps;
-            renderDependencyStatus(deps);
-        } catch (_) {}
-        dependencyInstallInFlight = false;
-        renderOnboardingStep();
-    }
+    // Welcome screen + hands-on tour wiring lives in subsequent tasks.
+    // restartOnboarding() is exported as a stub so the Setup Guide button
+    // in the dependency dropdown does not crash before the rewire lands.
+    function restartOnboarding() { /* rewired in onboarding rebuild Task 7 */ }
 
     async function allowDependencyAutoDownload() {
         setAutoDownloadConsent("allow");
@@ -1085,10 +895,6 @@ const App = (() => {
                 }
             }
 
-            // Show onboarding for first-time alert mode users (after deps settle)
-            if (!shouldOfferAutoInstall || consent) {
-                checkOnboardingForMode("alert");
-            }
         } catch (e) {
             // Server not running - show connection error
             setDependencyBanner(
@@ -2505,12 +2311,7 @@ const App = (() => {
         toggleShortcutHelp,
         installMissingDependencies,
         updateYtdlp,
-        onboardingNext,
-        onboardingBack,
-        skipOnboarding,
         restartOnboarding,
-        checkOnboardingForMode,
-        onboardingInstallRuntime,
         chooseOutputFolder,
         applyOutputFolder,
         resetOutputFolder,
