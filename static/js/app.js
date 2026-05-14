@@ -31,6 +31,8 @@ const App = (() => {
     const ONBOARDING_DONE_KEY = "alertAlertOnboardingDone";
     const TOUR_SAMPLE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
     let onboardingPhase = null; // null | "welcome" | "deps" | "tour" | "done"
+    let _tourTrimInSet = false;
+    let _tourTrimOutSet = false;
 
     let dependencyDropdownCloseHandlersBound = false;
     let dependencyBannerTimer = null;
@@ -1545,6 +1547,10 @@ const App = (() => {
         $("trim-start-val").textContent = formatDuration(trimStart);
         $("trim-duration").textContent = "Duration: " + formatDuration(trimEnd - trimStart);
         updateWaveformRegion();
+        _tourTrimInSet = true;
+        if (_tourTrimInSet && _tourTrimOutSet) {
+            document.dispatchEvent(new CustomEvent("app:trim-set"));
+        }
     }
 
     function setTrimOut() {
@@ -1556,6 +1562,10 @@ const App = (() => {
         $("trim-end-val").textContent = formatDuration(trimEnd);
         $("trim-duration").textContent = "Duration: " + formatDuration(trimEnd - trimStart);
         updateWaveformRegion();
+        _tourTrimOutSet = true;
+        if (_tourTrimInSet && _tourTrimOutSet) {
+            document.dispatchEvent(new CustomEvent("app:trim-set"));
+        }
     }
 
     function onVolumeChange() {
@@ -1610,6 +1620,7 @@ const App = (() => {
             $("video-title").textContent = data.title;
             $("video-duration").textContent = videoDuration > 0 ? formatDuration(videoDuration) : "Unknown";
             show("video-info");
+            document.dispatchEvent(new CustomEvent("app:url-validated"));
 
             // Step 2: Automatically download the full video
             $("download-status-text").textContent = "Downloading video...";
@@ -2411,6 +2422,7 @@ const App = (() => {
                     if (exportBtn) exportBtn.disabled = false;
                     show("download-section");
                     setLoading("process-btn", false);
+                    document.dispatchEvent(new CustomEvent("app:processing-complete"));
                     return;
                 }
 
