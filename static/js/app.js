@@ -891,6 +891,136 @@ const App = (() => {
         onboardingPhase = null;
     }
 
+    // ── Tour: coach-mark engine ─────────────────────────────────
+    let tourReflowBound = false;
+    let tourCurrentTarget = null;
+
+    function showTourOverlay() {
+        const el = $("tour-overlay");
+        if (el) {
+            el.classList.remove("hidden");
+            el.setAttribute("aria-hidden", "false");
+        }
+        if (!tourReflowBound) {
+            window.addEventListener("scroll", reflowSpotlight, true);
+            window.addEventListener("resize", reflowSpotlight);
+            tourReflowBound = true;
+        }
+    }
+
+    function hideTourOverlay() {
+        const el = $("tour-overlay");
+        if (el) {
+            el.classList.add("hidden");
+            el.setAttribute("aria-hidden", "true");
+        }
+        tourCurrentTarget = null;
+        if (tourReflowBound) {
+            window.removeEventListener("scroll", reflowSpotlight, true);
+            window.removeEventListener("resize", reflowSpotlight);
+            tourReflowBound = false;
+        }
+    }
+
+    function reflowSpotlight() {
+        if (!tourCurrentTarget) return;
+        const el = typeof tourCurrentTarget === "string" ? $(tourCurrentTarget) : tourCurrentTarget;
+        if (!el) return;
+        positionSpotlight(el);
+    }
+
+    function positionSpotlight(target) {
+        const rect = target.getBoundingClientRect();
+        const pad = 10;
+        const top = Math.max(0, rect.top - pad);
+        const left = Math.max(0, rect.left - pad);
+        const width = rect.width + pad * 2;
+        const height = rect.height + pad * 2;
+
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const scrim = $("tour-scrim");
+        if (scrim) {
+            // Outer rect + inner cutout subpath. Even-odd fill (default) creates the hole.
+            scrim.style.clipPath =
+                `path('M 0 0 H ${vw} V ${vh} H 0 Z ` +
+                `M ${left} ${top} V ${top + height} H ${left + width} V ${top} Z')`;
+        }
+
+        const ring = $("tour-ring");
+        if (ring) {
+            ring.style.top = top + "px";
+            ring.style.left = left + "px";
+            ring.style.width = width + "px";
+            ring.style.height = height + "px";
+        }
+
+        positionTooltip(rect);
+    }
+
+    function positionTooltip(targetRect) {
+        const tooltip = $("tour-tooltip");
+        if (!tooltip) return;
+        const tw = tooltip.offsetWidth || 340;
+        const th = tooltip.offsetHeight || 200;
+        const margin = 16;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        // Prefer right of target; fall back to left, then below, then above.
+        let top, left;
+        if (targetRect.right + margin + tw <= vw) {
+            left = targetRect.right + margin;
+            top = Math.min(vh - th - margin, Math.max(margin, targetRect.top));
+        } else if (targetRect.left - margin - tw >= 0) {
+            left = targetRect.left - margin - tw;
+            top = Math.min(vh - th - margin, Math.max(margin, targetRect.top));
+        } else if (targetRect.bottom + margin + th <= vh) {
+            left = Math.min(vw - tw - margin, Math.max(margin, targetRect.left));
+            top = targetRect.bottom + margin;
+        } else {
+            left = Math.min(vw - tw - margin, Math.max(margin, targetRect.left));
+            top = Math.max(margin, targetRect.top - th - margin);
+        }
+        tooltip.style.top = top + "px";
+        tooltip.style.left = left + "px";
+    }
+
+    function waitForTarget(selector, timeoutMs = 5000) {
+        return new Promise((resolve) => {
+            const deadline = performance.now() + timeoutMs;
+            const tick = () => {
+                const el = document.querySelector(selector);
+                if (el && el.offsetParent !== null) {
+                    resolve(el);
+                    return;
+                }
+                if (performance.now() > deadline) {
+                    resolve(null);
+                    return;
+                }
+                requestAnimationFrame(tick);
+            };
+            tick();
+        });
+    }
+
+    async function spotlightTarget(selector) {
+        const target = await waitForTarget(selector);
+        if (!target) return null;
+        tourCurrentTarget = target;
+        positionSpotlight(target);
+        return target;
+    }
+
+    function onboardingTourNext() { /* wired in Task 6 */ }
+
+    // Temporary test hook for Task 4 verification. Removed in Task 6.
+    window.__tourTest = (selector) => {
+        showTourOverlay();
+        spotlightTarget(selector || "#url-input");
+    };
+
     async function allowDependencyAutoDownload() {
         setAutoDownloadConsent("allow");
         dependencyInstallAttempted = true;
@@ -2438,6 +2568,7 @@ const App = (() => {
         onboardingStartTour,
         onboardingSkip,
         onboardingInstallDeps,
+        onboardingTourNext,
         restartOnboarding,
         chooseOutputFolder,
         applyOutputFolder,

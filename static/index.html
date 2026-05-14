@@ -452,6 +452,25 @@
         </div>
     </section>
 
+    <!-- Onboarding: Tour Overlay -->
+    <div id="tour-overlay" class="tour-overlay hidden" aria-hidden="true">
+        <div id="tour-scrim" class="tour-scrim"></div>
+        <div id="tour-ring" class="tour-ring"></div>
+        <div id="tour-tooltip" class="tour-tooltip" role="dialog" aria-labelledby="tour-tooltip-title">
+            <div class="tour-tooltip-head">
+                <span id="tour-tooltip-step" class="tour-tooltip-step">Step 1 of 5</span>
+                <button id="tour-tooltip-skip" class="tour-tooltip-skip" type="button" onclick="App.onboardingSkip()">Skip tour</button>
+            </div>
+            <div class="tour-tooltip-progress"><div id="tour-tooltip-progress-fill"></div></div>
+            <h3 id="tour-tooltip-title" class="tour-tooltip-title"></h3>
+            <p id="tour-tooltip-body" class="tour-tooltip-body"></p>
+            <div class="tour-tooltip-foot">
+                <span id="tour-tooltip-hint" class="tour-tooltip-hint"></span>
+                <button id="tour-tooltip-next" class="tour-tooltip-next" type="button" onclick="App.onboardingTourNext()">Next</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/crop.js"></script>
     <script src="/static/js/app.js"></script>
     <script>

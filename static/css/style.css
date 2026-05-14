@@ -1867,3 +1867,125 @@ input[type="file"]::file-selector-button {
 
 .dep-gate-row-status.installed { color: #8ce0b1; }
 .dep-gate-row-status.missing { color: rgba(189, 201, 214, 0.82); }
+
+/* ── Onboarding: Tour Overlay ──────────────────────────────── */
+.tour-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9985;
+    pointer-events: none;
+}
+
+.tour-overlay.hidden { display: none; }
+
+.tour-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    pointer-events: auto;
+    transition: clip-path 0.18s ease;
+}
+
+.tour-ring {
+    position: fixed;
+    border: 3px solid var(--accent);
+    border-radius: 8px;
+    pointer-events: none;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45), 0 0 24px rgba(86, 163, 255, 0.45);
+    transition: top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+
+.tour-tooltip {
+    position: fixed;
+    max-width: 340px;
+    background: var(--panel, #1a212c);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px 16px;
+    color: var(--text);
+    box-shadow: 0 22px 50px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+    transition: top 0.18s ease, left 0.18s ease;
+}
+
+.tour-tooltip-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.tour-tooltip-step {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.tour-tooltip-skip {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.tour-tooltip-skip:hover { color: var(--text); }
+
+.tour-tooltip-progress {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+
+#tour-tooltip-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s ease;
+}
+
+.tour-tooltip-title {
+    font-size: 18px;
+    font-weight: 800;
+    margin: 0 0 6px;
+}
+
+.tour-tooltip-body {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin: 0 0 14px;
+}
+
+.tour-tooltip-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.tour-tooltip-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.tour-tooltip-next {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    border-radius: 999px;
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.tour-tooltip-next:hover { background: var(--accent-hover); }
+.tour-tooltip-next.hidden { display: none; }
