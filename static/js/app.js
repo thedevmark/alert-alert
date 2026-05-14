@@ -33,6 +33,44 @@ const App = (() => {
     let onboardingPhase = null; // null | "welcome" | "deps" | "tour" | "done"
     let _tourTrimInSet = false;
     let _tourTrimOutSet = false;
+    let tourStepIndex = 0;
+    let tourAdvanceUnsubscribe = null;
+
+    const TOUR_STEPS = [
+        {
+            target: "#step-1",
+            title: "Load your source clip",
+            body: "Paste a video URL and click Load Video. We've pre-filled a sample so you can try the tour without finding your own clip.",
+            advanceOn: "app:url-validated",
+            hint: "Click Load Video to continue ↓",
+        },
+        {
+            target: "#step-2",
+            title: "Optional: swap the audio",
+            body: "Want a different audio track? Add a second URL or local file here. Skip if you don't need it.",
+            advanceOn: "click-next",
+        },
+        {
+            target: "#step-3",
+            title: "Trim the clip",
+            body: "Use the I and O keys (or drag the sliders) to set the in and out points. We'll advance once both are set.",
+            advanceOn: "app:trim-set",
+            hint: "Press I, then O, to continue",
+        },
+        {
+            target: "#step-3",
+            title: "Frame the crop",
+            body: "Pick a preset (Stream Alert, Shorts) or drag the crop corners to frame your alert.",
+            advanceOn: "click-next",
+        },
+        {
+            target: "#step-4",
+            title: "Render and download",
+            body: "Click Process Video to render your first alert. We'll wait while it processes.",
+            advanceOn: "app:processing-complete",
+            hint: "Click Process Video to continue ↓",
+        },
+    ];
 
     let dependencyDropdownCloseHandlersBound = false;
     let dependencyBannerTimer = null;
@@ -799,7 +837,11 @@ const App = (() => {
     }
 
     function onboardingSkip() {
+        if (tourAdvanceUnsubscribe) tourAdvanceUnsubscribe();
+        tourAdvanceUnsubscribe = null;
         hideWelcomeScreen();
+        hideDepGate();
+        hideTourOverlay();
         markOnboardingDone();
         onboardingPhase = null;
     }
@@ -887,8 +929,79 @@ const App = (() => {
 
     function startTour() {
         onboardingPhase = "tour";
-        // Task 6 wires the tour state machine here. For now, mark done so the
-        // skeleton doesn't strand the user.
+        tourStepIndex = 0;
+        _tourTrimInSet = false;
+        _tourTrimOutSet = false;
+        if (window.__tourTest) delete window.__tourTest;
+        const urlInput = $("url-input");
+        if (urlInput && !urlInput.value.trim()) {
+            urlInput.value = TOUR_SAMPLE_URL;
+        }
+        showTourOverlay();
+        renderTourStep();
+    }
+
+    function renderTourStep() {
+        const step = TOUR_STEPS[tourStepIndex];
+        if (!step) {
+            finishTour();
+            return;
+        }
+
+        const total = TOUR_STEPS.length;
+        const current = tourStepIndex + 1;
+        const stepLabel = $("tour-tooltip-step");
+        if (stepLabel) stepLabel.textContent = `Step ${current} of ${total}`;
+        const progressFill = $("tour-tooltip-progress-fill");
+        if (progressFill) progressFill.style.width = `${(current / total) * 100}%`;
+
+        const title = $("tour-tooltip-title");
+        if (title) title.textContent = step.title;
+        const body = $("tour-tooltip-body");
+        if (body) body.textContent = step.body;
+
+        const hint = $("tour-tooltip-hint");
+        const nextBtn = $("tour-tooltip-next");
+        if (step.advanceOn === "click-next") {
+            if (hint) hint.textContent = "";
+            if (nextBtn) nextBtn.classList.remove("hidden");
+        } else {
+            if (hint) hint.textContent = step.hint || "";
+            if (nextBtn) nextBtn.classList.add("hidden");
+        }
+
+        if (tourAdvanceUnsubscribe) tourAdvanceUnsubscribe();
+        tourAdvanceUnsubscribe = null;
+        if (step.advanceOn && step.advanceOn !== "click-next") {
+            const handler = () => advanceTour();
+            document.addEventListener(step.advanceOn, handler, { once: true });
+            tourAdvanceUnsubscribe = () => document.removeEventListener(step.advanceOn, handler);
+        }
+
+        spotlightTarget(step.target).then((el) => {
+            if (!el) {
+                if (hint) hint.textContent = "";
+                if (nextBtn) nextBtn.classList.remove("hidden");
+            }
+        });
+    }
+
+    function advanceTour() {
+        if (tourAdvanceUnsubscribe) tourAdvanceUnsubscribe();
+        tourAdvanceUnsubscribe = null;
+        tourStepIndex++;
+        if (tourStepIndex >= TOUR_STEPS.length) {
+            finishTour();
+            return;
+        }
+        renderTourStep();
+    }
+
+    function finishTour() {
+        if (tourAdvanceUnsubscribe) tourAdvanceUnsubscribe();
+        tourAdvanceUnsubscribe = null;
+        hideTourOverlay();
+        // Task 7 wires the done card here.
         markOnboardingDone();
         onboardingPhase = null;
     }
@@ -1015,13 +1128,9 @@ const App = (() => {
         return target;
     }
 
-    function onboardingTourNext() { /* wired in Task 6 */ }
-
-    // Temporary test hook for Task 4 verification. Removed in Task 6.
-    window.__tourTest = (selector) => {
-        showTourOverlay();
-        spotlightTarget(selector || "#url-input");
-    };
+    function onboardingTourNext() {
+        advanceTour();
+    }
 
     async function allowDependencyAutoDownload() {
         setAutoDownloadConsent("allow");
