@@ -26,6 +26,12 @@ const App = (() => {
     let dependencyInstallInFlight = false;
     let dependencyUpdateInFlight = false;
     let lastDeps = null;
+
+    // ── Onboarding state ────────────────────────────────────────
+    const ONBOARDING_DONE_KEY = "alertAlertOnboardingDone";
+    const TOUR_SAMPLE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    let onboardingPhase = null; // null | "welcome" | "deps" | "tour" | "done"
+
     let dependencyDropdownCloseHandlersBound = false;
     let dependencyBannerTimer = null;
     let storageConfig = null;
@@ -766,10 +772,48 @@ const App = (() => {
     }
 
     // ── Onboarding ───────────────────────────────────────────────
-    // Welcome screen + hands-on tour wiring lives in subsequent tasks.
-    // restartOnboarding() is exported as a stub so the Setup Guide button
-    // in the dependency dropdown does not crash before the rewire lands.
-    function restartOnboarding() { /* rewired in onboarding rebuild Task 7 */ }
+
+    function isOnboardingDone() {
+        return localStorage.getItem(ONBOARDING_DONE_KEY) === "1";
+    }
+
+    function markOnboardingDone() {
+        localStorage.setItem(ONBOARDING_DONE_KEY, "1");
+    }
+
+    function clearOnboardingDone() {
+        localStorage.removeItem(ONBOARDING_DONE_KEY);
+    }
+
+    function showWelcomeScreen() {
+        onboardingPhase = "welcome";
+        const el = $("welcome-screen");
+        if (el) el.classList.remove("hidden");
+    }
+
+    function hideWelcomeScreen() {
+        const el = $("welcome-screen");
+        if (el) el.classList.add("hidden");
+    }
+
+    function onboardingSkip() {
+        hideWelcomeScreen();
+        markOnboardingDone();
+        onboardingPhase = null;
+    }
+
+    function onboardingStartTour() {
+        hideWelcomeScreen();
+        // Task 3 wires deps gate here; Task 6 wires the tour.
+        markOnboardingDone();
+        onboardingPhase = null;
+    }
+
+    function restartOnboarding() {
+        setPanelOpen("dependency-settings-panel", false);
+        clearOnboardingDone();
+        showWelcomeScreen();
+    }
 
     async function allowDependencyAutoDownload() {
         setAutoDownloadConsent("allow");
@@ -961,6 +1005,10 @@ const App = (() => {
 
         // ASCII star animation
         initStarAnimation();
+
+        if (!isOnboardingDone()) {
+            showWelcomeScreen();
+        }
     }
 
     // Loading animation state
@@ -2311,6 +2359,8 @@ const App = (() => {
         toggleShortcutHelp,
         installMissingDependencies,
         updateYtdlp,
+        onboardingStartTour,
+        onboardingSkip,
         restartOnboarding,
         chooseOutputFolder,
         applyOutputFolder,

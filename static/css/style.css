@@ -1718,3 +1718,85 @@ input[type="file"]::file-selector-button {
     background: rgba(86, 163, 255, 0.1);
 }
 
+/* ── Onboarding: Welcome Screen ────────────────────────────── */
+.welcome-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 9990;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    padding: 40px 24px;
+    animation: welcome-fade-in 0.25s ease;
+}
+
+.welcome-screen.hidden {
+    display: none;
+}
+
+@keyframes welcome-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.welcome-content {
+    max-width: 640px;
+    text-align: center;
+}
+
+.welcome-logo {
+    font-size: 64px;
+    font-weight: 900;
+    margin: 0 0 24px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+
+.welcome-headline {
+    font-size: 32px;
+    font-weight: 800;
+    margin: 0 0 16px;
+    color: var(--text);
+    line-height: 1.2;
+}
+
+.welcome-sub {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin: 0 0 36px;
+}
+
+.welcome-cta {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    border-radius: 999px;
+    padding: 16px 40px;
+    font-size: 17px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+    transition: background 0.15s, transform 0.1s;
+}
+
+.welcome-cta:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+}
+
+.welcome-skip {
+    display: block;
+    margin: 18px auto 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.welcome-skip:hover {
+    color: var(--text);
+}
