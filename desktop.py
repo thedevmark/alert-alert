@@ -81,13 +81,15 @@ class DesktopWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         self.view = QWebEngineView(self)
-        # Off-the-record profile: no persistent cookies, cache, or history.
-        # Prevents leftover state from prior installs (e.g. cached toolkit
-        # auth pages) from leaking into the embedded app, and forces fresh
-        # loads of static assets on every launch.
-        self.profile = QWebEngineProfile(self.view)
+        # Named profile (NOT off-the-record) so QtWebEngine's proprietary
+        # media decoders stay wired up — off-the-record profiles silently
+        # break <video src> playback from the local Flask origin. Memory
+        # cache + no persistent cookies still prevent stale state from
+        # prior installs from leaking across launches.
+        self.profile = QWebEngineProfile("alert-alert", self.view)
         self.profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
+        self.profile.clearHttpCache()
         self.page = DesktopPage(self.profile, self.view)
         self.view.setPage(self.page)
         self.setCentralWidget(self.view)
