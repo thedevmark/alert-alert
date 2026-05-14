@@ -416,6 +416,24 @@
         </div>
     </main>
 
+    <!-- Onboarding: Welcome Screen -->
+    <section id="welcome-screen" class="welcome-screen hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+        <div class="welcome-content">
+            <h1 class="welcome-logo">Alert<span class="ascii-bang">!</span> Alert<span class="ascii-bang">!</span></h1>
+            <h2 id="welcome-title" class="welcome-headline">Turn a video into a finished alert clip.</h2>
+            <p class="welcome-sub">
+                We'll walk you through loading a clip, framing it, trimming it, and exporting a stream-ready alert.
+                Takes about two minutes.
+            </p>
+            <button id="welcome-start-btn" class="welcome-cta" type="button" onclick="App.onboardingStartTour()">
+                Start Tour
+            </button>
+            <button id="welcome-skip-link" class="welcome-skip" type="button" onclick="App.onboardingSkip()">
+                Skip for now
+            </button>
+        </div>
+    </section>
+
     <script src="/static/js/crop.js"></script>
     <script src="/static/js/app.js"></script>
     <script>
