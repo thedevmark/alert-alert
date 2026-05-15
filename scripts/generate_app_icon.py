@@ -43,6 +43,17 @@ def _rounded_rect(draw: ImageDraw.ImageDraw, box, radius, fill):
     )
 
 
+def _ellipse(draw: ImageDraw.ImageDraw, cx, cy, rx, ry, fill):
+    """Pillow ellipse wrapper that scales 1024-space inputs."""
+    draw.ellipse(
+        (
+            _scale(cx - rx), _scale(cy - ry),
+            _scale(cx + rx), _scale(cy + ry),
+        ),
+        fill=fill + (255,),
+    )
+
+
 def _quadratic_bezier(p0, p1, p2, n: int = 32):
     """Sample a quadratic Bezier into ``n + 1`` (x, y) points in 1024-space."""
     points = []
@@ -84,6 +95,9 @@ def render_master() -> Image.Image:
 
     draw.polygon(_bang_stem_polygon("left"), fill=AMBER + (255,))
     draw.polygon(_bang_stem_polygon("right"), fill=IVORY + (255,))
+
+    _ellipse(draw, 348, 522, 60, 58, AMBER)
+    _ellipse(draw, 676, 522, 60, 58, IVORY)
 
     return image
 
