@@ -1726,7 +1726,7 @@ input[type="file"]::file-selector-button {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg);
+    background: var(--bg-base);
     padding: 40px 24px;
     animation: welcome-fade-in 0.25s ease;
 }
@@ -1809,7 +1809,7 @@ input[type="file"]::file-selector-button {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg);
+    background: var(--bg-base);
     padding: 40px 24px;
     animation: welcome-fade-in 0.25s ease;
 }
