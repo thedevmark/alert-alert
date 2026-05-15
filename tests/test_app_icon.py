@@ -84,5 +84,42 @@ class TestEyes(unittest.TestCase):
         self.assertLess(abs(b - 52), 3)
 
 
+class TestSmile(unittest.TestCase):
+    def test_smile_left_end_is_amber_ish(self):
+        master = gen.render_master()
+        # Smile path: M 320 730 Q 512 878 704 730, stroke 52, round cap.
+        # Sample inside the left cap, which should be amber-side gradient.
+        x = int(gen._scale(322))
+        y = int(gen._scale(730))
+        r, g, b, _ = master.getpixel((x, y))
+        # Amber dominant: red >> blue
+        self.assertGreater(r, 200)
+        self.assertGreater(g, 140)
+        self.assertLess(b, 120)
+
+    def test_smile_right_end_is_ivory_ish(self):
+        master = gen.render_master()
+        x = int(gen._scale(702))
+        y = int(gen._scale(730))
+        r, g, b, _ = master.getpixel((x, y))
+        # Ivory dominant: balanced high RGB
+        self.assertGreater(r, 220)
+        self.assertGreater(g, 220)
+        self.assertGreater(b, 220)
+
+    def test_smile_bottom_is_mixed_gradient(self):
+        master = gen.render_master()
+        # Smile centerline bottom is at y≈804 (Bezier midpoint); stroke half-width 26
+        # puts the stroke's bottom edge near y=830. Sample y=820 — inside the stroke.
+        x = int(gen._scale(512))
+        y = int(gen._scale(820))
+        r, g, b, a = master.getpixel((x, y))
+        self.assertEqual(a, 255)
+        # Mid-gradient should sit between amber (255,181,71) and ivory (238,244,250).
+        self.assertGreater(r, 230)
+        self.assertGreater(g, 200)
+        self.assertLess(g, 244)
+
+
 if __name__ == "__main__":
     unittest.main()

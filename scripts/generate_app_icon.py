@@ -27,6 +27,13 @@ INNER = (22, 35, 52)       # #162334
 AMBER = (255, 181, 71)     # #FFB547
 IVORY = (238, 244, 250)    # #EEF4FA
 
+SMILE_PATH = (
+    (320, 730),  # start
+    (512, 878),  # quadratic control
+    (704, 730),  # end
+)
+SMILE_STROKE_WIDTH = 52  # 1024-space pixels
+
 
 def _scale(value: float) -> float:
     """Scale a 1024-space coordinate into render-space."""
@@ -85,6 +92,66 @@ def _bang_stem_polygon(side: str):
     return [(_scale(x), _scale(y)) for x, y in top + bottom]
 
 
+def _build_horizontal_gradient(width, height, left, right, start_x=0, end_x=None):
+    """Linear left→right gradient image at render resolution.
+
+    The gradient interpolates between ``start_x`` and ``end_x`` (in pixels).
+    Outside that range the color clamps to the end stops. This mirrors SVG's
+    default ``objectBoundingBox`` gradient behaviour — the gradient spans the
+    smile path's bounding box, not the whole canvas.
+    """
+    if end_x is None:
+        end_x = width - 1
+    gradient = Image.new("RGBA", (width, height))
+    pixels = gradient.load()
+    lr, lg, lb = left
+    rr, rg, rb = right
+    span = max(end_x - start_x, 1)
+    for x in range(width):
+        t = (x - start_x) / span
+        t = max(0.0, min(1.0, t))
+        r = round(lr * (1.0 - t) + rr * t)
+        g = round(lg * (1.0 - t) + rg * t)
+        b = round(lb * (1.0 - t) + rb * t)
+        for y in range(height):
+            pixels[x, y] = (r, g, b, 255)
+    return gradient
+
+
+def _smile_mask() -> Image.Image:
+    """Single-channel mask of the smile stroke at render resolution."""
+    mask = Image.new("L", (RENDER_SIZE, RENDER_SIZE), 0)
+    draw = ImageDraw.Draw(mask)
+
+    p0, p1, p2 = SMILE_PATH
+    points = [
+        (_scale(x), _scale(y))
+        for x, y in _quadratic_bezier(p0, p1, p2, n=128)
+    ]
+    draw.line(points, fill=255, width=int(_scale(SMILE_STROKE_WIDTH)), joint="curve")
+
+    # Round caps: filled circles at each endpoint, radius = half the stroke width.
+    cap_radius = _scale(SMILE_STROKE_WIDTH / 2)
+    for cx, cy in (points[0], points[-1]):
+        draw.ellipse(
+            (cx - cap_radius, cy - cap_radius, cx + cap_radius, cy + cap_radius),
+            fill=255,
+        )
+    return mask
+
+
+def _composite_smile(image: Image.Image) -> None:
+    """Paint the gradient-stroked smile onto ``image`` in place."""
+    smile_left = _scale(SMILE_PATH[0][0])   # 320 in 1024-space
+    smile_right = _scale(SMILE_PATH[2][0])  # 704 in 1024-space
+    gradient = _build_horizontal_gradient(
+        RENDER_SIZE, RENDER_SIZE, AMBER, IVORY,
+        start_x=smile_left, end_x=smile_right,
+    )
+    mask = _smile_mask()
+    image.paste(gradient, (0, 0), mask)
+
+
 def render_master() -> Image.Image:
     """Render the full icon at supersampled resolution."""
     image = Image.new("RGBA", (RENDER_SIZE, RENDER_SIZE), (0, 0, 0, 0))
@@ -98,6 +165,8 @@ def render_master() -> Image.Image:
 
     _ellipse(draw, 348, 522, 60, 58, AMBER)
     _ellipse(draw, 676, 522, 60, 58, IVORY)
+
+    _composite_smile(image)
 
     return image
 
