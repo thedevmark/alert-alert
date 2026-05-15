@@ -121,22 +121,26 @@ def _build_horizontal_gradient(width, height, left, right, start_x=0, end_x=None
 
 
 def _smile_mask() -> Image.Image:
-    """Single-channel mask of the smile stroke at render resolution."""
+    """Single-channel mask of the smile stroke at render resolution.
+
+    Built from densely-overlapping filled circles along the Bezier path rather
+    than ``ImageDraw.line`` with a wide stroke. The thick-line approach left
+    hairline gaps at segment joints on the high-curvature region near the
+    apex, which downsample into visible "cracks" in the gradient fill. Dense
+    circles guarantee no gaps and give round caps for free.
+    """
     mask = Image.new("L", (RENDER_SIZE, RENDER_SIZE), 0)
     draw = ImageDraw.Draw(mask)
 
     p0, p1, p2 = SMILE_PATH
     points = [
         (_scale(x), _scale(y))
-        for x, y in _quadratic_bezier(p0, p1, p2, n=128)
+        for x, y in _quadratic_bezier(p0, p1, p2, n=512)
     ]
-    draw.line(points, fill=255, width=int(_scale(SMILE_STROKE_WIDTH)), joint="curve")
-
-    # Round caps: filled circles at each endpoint, radius = half the stroke width.
-    cap_radius = _scale(SMILE_STROKE_WIDTH / 2)
-    for cx, cy in (points[0], points[-1]):
+    radius = _scale(SMILE_STROKE_WIDTH / 2)
+    for cx, cy in points:
         draw.ellipse(
-            (cx - cap_radius, cy - cap_radius, cx + cap_radius, cy + cap_radius),
+            (cx - radius, cy - radius, cx + radius, cy + radius),
             fill=255,
         )
     return mask
