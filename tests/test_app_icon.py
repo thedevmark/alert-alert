@@ -54,5 +54,35 @@ class TestBangStems(unittest.TestCase):
         self.assertLess(abs(b - 250), 3)
 
 
+class TestEyes(unittest.TestCase):
+    def test_left_eye_center_is_amber(self):
+        master = gen.render_master()
+        x = int(gen._scale(348))
+        y = int(gen._scale(522))
+        r, g, b, _ = master.getpixel((x, y))
+        self.assertLess(abs(r - 255), 3)
+        self.assertLess(abs(g - 181), 3)
+        self.assertLess(abs(b - 71), 3)
+
+    def test_right_eye_center_is_ivory(self):
+        master = gen.render_master()
+        x = int(gen._scale(676))
+        y = int(gen._scale(522))
+        r, g, b, _ = master.getpixel((x, y))
+        self.assertLess(abs(r - 238), 3)
+        self.assertLess(abs(g - 244), 3)
+        self.assertLess(abs(b - 250), 3)
+
+    def test_between_eyes_is_inner_panel(self):
+        master = gen.render_master()
+        # Midway between the eyes should still be inner-panel color
+        x = int(gen._scale(512))
+        y = int(gen._scale(522))
+        r, g, b, _ = master.getpixel((x, y))
+        self.assertLess(abs(r - 22), 3)
+        self.assertLess(abs(g - 35), 3)
+        self.assertLess(abs(b - 52), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
