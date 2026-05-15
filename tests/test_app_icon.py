@@ -32,5 +32,27 @@ class TestCanvas(unittest.TestCase):
         self.assertLess(abs(b - 52), 3)
 
 
+class TestBangStems(unittest.TestCase):
+    def test_left_stem_center_is_amber(self):
+        master = gen.render_master()
+        # Stem 1024-space spans x∈[296,400], y∈[180,440]. Center ~ (348, 310).
+        x = int(gen._scale(348))
+        y = int(gen._scale(310))
+        r, g, b, _ = master.getpixel((x, y))
+        self.assertLess(abs(r - 255), 3)
+        self.assertLess(abs(g - 181), 3)
+        self.assertLess(abs(b - 71), 3)
+
+    def test_right_stem_center_is_ivory(self):
+        master = gen.render_master()
+        # Stem 1024-space spans x∈[624,728], y∈[180,440]. Center ~ (676, 310).
+        x = int(gen._scale(676))
+        y = int(gen._scale(310))
+        r, g, b, _ = master.getpixel((x, y))
+        self.assertLess(abs(r - 238), 3)
+        self.assertLess(abs(g - 244), 3)
+        self.assertLess(abs(b - 250), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,14 +43,47 @@ def _rounded_rect(draw: ImageDraw.ImageDraw, box, radius, fill):
     )
 
 
+def _quadratic_bezier(p0, p1, p2, n: int = 32):
+    """Sample a quadratic Bezier into ``n + 1`` (x, y) points in 1024-space."""
+    points = []
+    for i in range(n + 1):
+        t = i / n
+        u = 1.0 - t
+        x = u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0]
+        y = u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1]
+        points.append((x, y))
+    return points
+
+
+def _bang_stem_polygon(side: str):
+    """Polygon points for one Inconsolata-tapered bang stem.
+
+    SVG path (left stem):
+        M 296 180 Q 348 172 400 180 L 384 440 Q 348 434 312 440 Z
+    Right stem mirrors at x = 512.
+    """
+    if side == "left":
+        top = _quadratic_bezier((296, 180), (348, 172), (400, 180))
+        bottom = _quadratic_bezier((384, 440), (348, 434), (312, 440))
+    elif side == "right":
+        top = _quadratic_bezier((624, 180), (676, 172), (728, 180))
+        bottom = _quadratic_bezier((712, 440), (676, 434), (640, 440))
+    else:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    # Polygon: top L→R, then bottom L→R-of-path (which is R→L spatially).
+    return [(_scale(x), _scale(y)) for x, y in top + bottom]
+
+
 def render_master() -> Image.Image:
     """Render the full icon at supersampled resolution."""
     image = Image.new("RGBA", (RENDER_SIZE, RENDER_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    # Canvas: outer rounded square + inner panel
     _rounded_rect(draw, (0, 0, 1024, 1024), 224, OUTER)
     _rounded_rect(draw, (40, 40, 984, 984), 200, INNER)
+
+    draw.polygon(_bang_stem_polygon("left"), fill=AMBER + (255,))
+    draw.polygon(_bang_stem_polygon("right"), fill=IVORY + (255,))
 
     return image
 
