@@ -6,6 +6,8 @@ downsampled with LANCZOS for clean anti-aliasing.
 """
 from __future__ import annotations
 
+import io
+import struct
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -171,11 +173,57 @@ def render_master() -> Image.Image:
     return image
 
 
+def write_png(master: Image.Image, path: Path, size: int) -> None:
+    """Downsample ``master`` to ``size`` and write a PNG."""
+    resized = master.resize((size, size), Image.LANCZOS)
+    resized.save(path, format="PNG", optimize=True)
+
+
+def write_ico(master: Image.Image, path: Path, sizes: list[int]) -> None:
+    """Write a multi-resolution ICO. Each entry is a PNG-compressed payload
+    (the standard modern ICO encoding).
+
+    The header is built manually so the byte layout is deterministic and
+    independent of Pillow's internal ICO encoder revisions.
+    """
+    payloads = []
+    for size in sizes:
+        resized = master.resize((size, size), Image.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format="PNG", optimize=True)
+        payloads.append((size, buf.getvalue()))
+
+    header = struct.pack("<HHH", 0, 1, len(payloads))
+    entries = []
+    image_blob = b""
+    offset = 6 + 16 * len(payloads)
+    for size, payload in payloads:
+        # Size byte: 0 means 256 in the ICO format.
+        size_byte = 0 if size >= 256 else size
+        entries.append(struct.pack(
+            "<BBBBHHII",
+            size_byte,           # width
+            size_byte,           # height
+            0,                   # color count (0 for >=256 colors)
+            0,                   # reserved
+            1,                   # color planes
+            32,                  # bits per pixel
+            len(payload),        # image data size
+            offset,              # data offset
+        ))
+        image_blob += payload
+        offset += len(payload)
+
+    path.write_bytes(header + b"".join(entries) + image_blob)
+
+
 def main() -> None:
     IMG_DIR.mkdir(parents=True, exist_ok=True)
     master = render_master()
-    # PNG/ICO writes are wired in later tasks; this no-op keeps the CLI runnable.
-    print(f"Rendered master at {master.size}.")
+    write_png(master, IMG_DIR / "logo.png", TARGET_SIZE)
+    write_ico(master, STATIC_DIR / "favicon.ico", ICO_SIZES)
+    print(f"Wrote {IMG_DIR / 'logo.png'} ({TARGET_SIZE}px) "
+          f"and {STATIC_DIR / 'favicon.ico'} ({len(ICO_SIZES)} sizes).")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
+import io
 import os
+import shutil
+import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -119,6 +123,51 @@ class TestSmile(unittest.TestCase):
         self.assertGreater(r, 230)
         self.assertGreater(g, 200)
         self.assertLess(g, 244)
+
+
+class TestOutputArtifacts(unittest.TestCase):
+    """Render to a temp dir so tests never touch the committed assets."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.png_path = self.tmpdir / "logo.png"
+        self.ico_path = self.tmpdir / "favicon.ico"
+        master = gen.render_master()
+        gen.write_png(master, self.png_path, gen.TARGET_SIZE)
+        gen.write_ico(master, self.ico_path, gen.ICO_SIZES)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_png_is_correct_size_and_mode(self):
+        with Image.open(self.png_path) as im:
+            im.load()
+            self.assertEqual(im.size, (1024, 1024))
+            self.assertEqual(im.mode, "RGBA")
+
+    def test_ico_contains_all_expected_sizes(self):
+        # Parse the ICO header: 6-byte ICONDIR + 16-byte ICONDIRENTRY per image.
+        data = self.ico_path.read_bytes()
+        reserved, image_type, count = struct.unpack("<HHH", data[:6])
+        self.assertEqual(reserved, 0)
+        self.assertEqual(image_type, 1)  # 1 = ICO, 2 = CUR
+        self.assertEqual(count, len(gen.ICO_SIZES))
+
+        embedded_sizes = []
+        for i in range(count):
+            entry = data[6 + i * 16 : 6 + (i + 1) * 16]
+            w, h = entry[0], entry[1]
+            # 0 in the byte means 256 (ICO format quirk).
+            embedded_sizes.append((w or 256, h or 256))
+        for size in gen.ICO_SIZES:
+            self.assertIn((size, size), embedded_sizes)
+
+    def test_render_is_deterministic(self):
+        a = io.BytesIO()
+        b = io.BytesIO()
+        gen.render_master().resize((256, 256), Image.LANCZOS).save(a, format="PNG", optimize=True)
+        gen.render_master().resize((256, 256), Image.LANCZOS).save(b, format="PNG", optimize=True)
+        self.assertEqual(a.getvalue(), b.getvalue())
 
 
 if __name__ == "__main__":
