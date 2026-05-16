@@ -30,11 +30,11 @@ AMBER = (255, 181, 71)     # #FFB547
 IVORY = (238, 244, 250)    # #EEF4FA
 
 SMILE_PATH = (
-    (320, 730),  # start
-    (512, 878),  # quadratic control
-    (704, 730),  # end
+    (335, 723),  # start
+    (512, 859),  # quadratic control
+    (689, 723),  # end
 )
-SMILE_STROKE_WIDTH = 52  # 1024-space pixels
+SMILE_STROKE_WIDTH = 48  # 1024-space pixels
 
 
 def _scale(value: float) -> float:
@@ -79,15 +79,15 @@ def _bang_stem_polygon(side: str):
     """Polygon points for one Inconsolata-tapered bang stem.
 
     SVG path (left stem):
-        M 296 180 Q 348 172 400 180 L 384 440 Q 348 434 312 440 Z
+        M 313 217 Q 361 209 409 217 L 394 456 Q 361 450 328 456 Z
     Right stem mirrors at x = 512.
     """
     if side == "left":
-        top = _quadratic_bezier((296, 180), (348, 172), (400, 180))
-        bottom = _quadratic_bezier((384, 440), (348, 434), (312, 440))
+        top = _quadratic_bezier((313, 217), (361, 209), (409, 217))
+        bottom = _quadratic_bezier((394, 456), (361, 450), (328, 456))
     elif side == "right":
-        top = _quadratic_bezier((624, 180), (676, 172), (728, 180))
-        bottom = _quadratic_bezier((712, 440), (676, 434), (640, 440))
+        top = _quadratic_bezier((615, 217), (663, 209), (711, 217))
+        bottom = _quadratic_bezier((696, 456), (663, 450), (630, 456))
     else:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
     # Polygon: top L→R, then bottom L→R-of-path (which is R→L spatially).
@@ -169,8 +169,8 @@ def render_master() -> Image.Image:
     draw.polygon(_bang_stem_polygon("left"), fill=AMBER + (255,))
     draw.polygon(_bang_stem_polygon("right"), fill=IVORY + (255,))
 
-    _ellipse(draw, 348, 522, 60, 58, AMBER)
-    _ellipse(draw, 676, 522, 60, 58, IVORY)
+    _ellipse(draw, 361, 531, 55, 53, AMBER)
+    _ellipse(draw, 663, 531, 55, 53, IVORY)
 
     _composite_smile(image)
 

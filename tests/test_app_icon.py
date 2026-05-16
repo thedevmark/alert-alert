@@ -39,9 +39,9 @@ class TestCanvas(unittest.TestCase):
 class TestBangStems(unittest.TestCase):
     def test_left_stem_center_is_amber(self):
         master = gen.render_master()
-        # Stem 1024-space spans x∈[296,400], y∈[180,440]. Center ~ (348, 310).
-        x = int(gen._scale(348))
-        y = int(gen._scale(310))
+        # Stem 1024-space spans x∈[313,409], y∈[217,456]. Center ~ (361, 336).
+        x = int(gen._scale(361))
+        y = int(gen._scale(336))
         r, g, b, _ = master.getpixel((x, y))
         self.assertLess(abs(r - 255), 3)
         self.assertLess(abs(g - 181), 3)
@@ -49,9 +49,9 @@ class TestBangStems(unittest.TestCase):
 
     def test_right_stem_center_is_ivory(self):
         master = gen.render_master()
-        # Stem 1024-space spans x∈[624,728], y∈[180,440]. Center ~ (676, 310).
-        x = int(gen._scale(676))
-        y = int(gen._scale(310))
+        # Stem 1024-space spans x∈[615,711], y∈[217,456]. Center ~ (663, 336).
+        x = int(gen._scale(663))
+        y = int(gen._scale(336))
         r, g, b, _ = master.getpixel((x, y))
         self.assertLess(abs(r - 238), 3)
         self.assertLess(abs(g - 244), 3)
@@ -61,8 +61,8 @@ class TestBangStems(unittest.TestCase):
 class TestEyes(unittest.TestCase):
     def test_left_eye_center_is_amber(self):
         master = gen.render_master()
-        x = int(gen._scale(348))
-        y = int(gen._scale(522))
+        x = int(gen._scale(361))
+        y = int(gen._scale(531))
         r, g, b, _ = master.getpixel((x, y))
         self.assertLess(abs(r - 255), 3)
         self.assertLess(abs(g - 181), 3)
@@ -70,8 +70,8 @@ class TestEyes(unittest.TestCase):
 
     def test_right_eye_center_is_ivory(self):
         master = gen.render_master()
-        x = int(gen._scale(676))
-        y = int(gen._scale(522))
+        x = int(gen._scale(663))
+        y = int(gen._scale(531))
         r, g, b, _ = master.getpixel((x, y))
         self.assertLess(abs(r - 238), 3)
         self.assertLess(abs(g - 244), 3)
@@ -81,7 +81,7 @@ class TestEyes(unittest.TestCase):
         master = gen.render_master()
         # Midway between the eyes should still be inner-panel color
         x = int(gen._scale(512))
-        y = int(gen._scale(522))
+        y = int(gen._scale(531))
         r, g, b, _ = master.getpixel((x, y))
         self.assertLess(abs(r - 22), 3)
         self.assertLess(abs(g - 35), 3)
@@ -91,10 +91,10 @@ class TestEyes(unittest.TestCase):
 class TestSmile(unittest.TestCase):
     def test_smile_left_end_is_amber_ish(self):
         master = gen.render_master()
-        # Smile path: M 320 730 Q 512 878 704 730, stroke 52, round cap.
-        # Sample inside the left cap, which should be amber-side gradient.
-        x = int(gen._scale(322))
-        y = int(gen._scale(730))
+        # Smile path: M 335 723 Q 512 859 689 723, stroke 48, round cap.
+        # Sample just inside the left cap — should be amber-side gradient.
+        x = int(gen._scale(337))
+        y = int(gen._scale(723))
         r, g, b, _ = master.getpixel((x, y))
         # Amber dominant: red >> blue
         self.assertGreater(r, 200)
@@ -103,8 +103,8 @@ class TestSmile(unittest.TestCase):
 
     def test_smile_right_end_is_ivory_ish(self):
         master = gen.render_master()
-        x = int(gen._scale(702))
-        y = int(gen._scale(730))
+        x = int(gen._scale(687))
+        y = int(gen._scale(723))
         r, g, b, _ = master.getpixel((x, y))
         # Ivory dominant: balanced high RGB
         self.assertGreater(r, 220)
@@ -113,10 +113,10 @@ class TestSmile(unittest.TestCase):
 
     def test_smile_bottom_is_mixed_gradient(self):
         master = gen.render_master()
-        # Smile centerline bottom is at y≈804 (Bezier midpoint); stroke half-width 26
-        # puts the stroke's bottom edge near y=830. Sample y=820 — inside the stroke.
+        # Smile centerline bottom is at y≈791 (Bezier midpoint); stroke half-width 24
+        # puts the stroke's bottom edge near y=815. Sample y=805 — inside the stroke.
         x = int(gen._scale(512))
-        y = int(gen._scale(820))
+        y = int(gen._scale(805))
         r, g, b, a = master.getpixel((x, y))
         self.assertEqual(a, 255)
         # Mid-gradient should sit between amber (255,181,71) and ivory (238,244,250).

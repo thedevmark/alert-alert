@@ -7,9 +7,9 @@
   </defs>
   <rect width="1024" height="1024" rx="224" fill="#0D1521"/>
   <rect x="40" y="40" width="944" height="944" rx="200" fill="#162334"/>
-  <path d="M 296 180 Q 348 172 400 180 L 384 440 Q 348 434 312 440 Z" fill="#FFB547"/>
-  <path d="M 624 180 Q 676 172 728 180 L 712 440 Q 676 434 640 440 Z" fill="#EEF4FA"/>
-  <ellipse cx="348" cy="522" rx="60" ry="58" fill="#FFB547"/>
-  <ellipse cx="676" cy="522" rx="60" ry="58" fill="#EEF4FA"/>
-  <path d="M 320 730 Q 512 878 704 730" stroke="url(#smileGrad)" stroke-width="52" stroke-linecap="round" fill="none"/>
+  <path d="M 313 217 Q 361 209 409 217 L 394 456 Q 361 450 328 456 Z" fill="#FFB547"/>
+  <path d="M 615 217 Q 663 209 711 217 L 696 456 Q 663 450 630 456 Z" fill="#EEF4FA"/>
+  <ellipse cx="361" cy="531" rx="55" ry="53" fill="#FFB547"/>
+  <ellipse cx="663" cy="531" rx="55" ry="53" fill="#EEF4FA"/>
+  <path d="M 335 723 Q 512 859 689 723" stroke="url(#smileGrad)" stroke-width="48" stroke-linecap="round" fill="none"/>
 </svg>
