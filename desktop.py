@@ -113,10 +113,10 @@ class DesktopWindow(QMainWindow):
         reload_action.triggered.connect(self.view.reload)
         app_menu.addAction(reload_action)
 
-        open_browser = QAction("Open in Browser", self)
-        open_browser.setShortcut(QKeySequence("Ctrl+Shift+B"))
-        open_browser.triggered.connect(lambda: webbrowser.open(APP_URL))
-        app_menu.addAction(open_browser)
+        restart_onboarding = QAction("Restart Onboarding", self)
+        restart_onboarding.setStatusTip("Replay the welcome tour")
+        restart_onboarding.triggered.connect(self._restart_onboarding)
+        app_menu.addAction(restart_onboarding)
 
         reset_action = QAction("Reset Settings", self)
         reset_action.triggered.connect(self._reset_settings)
@@ -148,6 +148,12 @@ class DesktopWindow(QMainWindow):
 
     def _reset_settings(self):
         self.view.page().runJavaScript("App.resetSettings()")
+
+    def _restart_onboarding(self):
+        self.view.page().runJavaScript(
+            "if (typeof App !== 'undefined' && App.restartOnboarding) App.restartOnboarding();"
+        )
+        self.statusBar().showMessage("Onboarding restarted.", 3000)
 
     def _open_dep_settings(self):
         self.view.page().runJavaScript(
