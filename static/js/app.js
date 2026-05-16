@@ -1654,6 +1654,30 @@ const App = (() => {
         if (btn) btn.classList.toggle("active", video.loop);
     }
 
+    // ── Preview Play / Mute ──────────────────────────────────────
+
+    function togglePreviewPlay() {
+        const video = $("crop-video");
+        if (!video || !video.src) return;
+        const btn = $("preview-play-btn");
+        if (video.paused) {
+            video.play().catch(() => {});
+            if (btn) btn.textContent = "⏸ Pause";
+        } else {
+            video.pause();
+            if (btn) btn.textContent = "▶ Play";
+        }
+    }
+
+    function togglePreviewMute() {
+        const video = $("crop-video");
+        if (!video) return;
+        const useExternalAudio = hasActiveSeparateAudioPreview();
+        if (useExternalAudio) return;  // mute is forced when separate audio is active
+        video.muted = !video.muted;
+        updatePreviewAudioRouting();
+    }
+
     // ── Set In / Out ─────────────────────────────────────────────
 
     function setTrimIn() {
@@ -2435,6 +2459,16 @@ const App = (() => {
                 video.play().catch(() => { });
             }
         };
+        // Keep the play-button label honest regardless of how play state changes
+        // (keyboard shortcut, auto-pause at trim end, looped restart, etc.).
+        video.onplay = () => {
+            const btn = $("preview-play-btn");
+            if (btn) btn.textContent = "⏸ Pause";
+        };
+        video.onpause = () => {
+            const btn = $("preview-play-btn");
+            if (btn) btn.textContent = "▶ Play";
+        };
     }
 
     // ── Step 4: Process & Export ─────────────────────────────────
@@ -2692,6 +2726,8 @@ const App = (() => {
         setTrimIn,
         setTrimOut,
         toggleLoop,
+        togglePreviewPlay,
+        togglePreviewMute,
         toggleShortcutHelp,
         installMissingDependencies,
         updateYtdlp,

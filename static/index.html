@@ -109,7 +109,7 @@
         <aside class="video-sidebar hidden" id="video-sidebar">
             <div class="video-preview-sticky">
                 <div id="crop-container">
-                    <video id="crop-video" muted playsinline></video>
+                    <video id="crop-video" playsinline></video>
                     <img id="crop-image" class="hidden" alt="Static image crop preview"
                         style="display:block;max-width:100%;max-height:calc(100vh - 250px);width:auto;height:auto;object-fit:contain;pointer-events:none;">
                     <div id="crop-overlay" class="hidden"></div>
@@ -121,8 +121,8 @@
                     <span id="preview-timeline-value" class="volume-value timeline-value">0:00.00 / 0:00.00</span>
                 </div>
                 <div class="preview-controls" id="preview-controls">
-                    <button id="preview-play-btn" class="control-btn">▶ Play</button>
-                    <button id="preview-mute-btn" class="control-btn">🔇 Unmute</button>
+                    <button id="preview-play-btn" class="control-btn" onclick="App.togglePreviewPlay()">▶ Play</button>
+                    <button id="preview-mute-btn" class="control-btn" onclick="App.togglePreviewMute()">🔇 Unmute</button>
                     <button id="preview-loop-btn" class="control-btn" onclick="App.toggleLoop()" title="Loop preview">↺ Loop</button>
                     <button id="set-in-btn" class="control-btn trim-point-btn hidden" onclick="App.setTrimIn()" title="Set trim start to current position (I)">[ In ]</button>
                     <button id="set-out-btn" class="control-btn trim-point-btn hidden" onclick="App.setTrimOut()" title="Set trim end to current position (O)">[ Out ]</button>
