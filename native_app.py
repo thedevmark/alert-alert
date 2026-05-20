@@ -613,48 +613,78 @@ class DepInstallWorker(QThread):
             self.done.emit(False, str(e))
 
 
-class WaveformBar(QWidget):
-    """Waveform strip with a playhead and dimmed out-of-trim regions; click to seek."""
-    seek_to = Signal(float)
+class Scrubber(QWidget):
+    """Combined timeline: waveform + playhead + draggable in/out trim handles
+    (Premiere/TikTok style). Click or drag the body to seek; drag a handle to trim."""
+    seek_to = Signal(float)              # 0..1 fraction
+    trim_changed = Signal(float, float)  # in_frac, out_frac
+    HANDLE = 7  # px hit tolerance
 
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(64)
+        self.setFixedHeight(74)
         self.setObjectName("wave")
+        self.setMouseTracking(True)
         self._pix = None
         self._frac = 0.0
         self._in = 0.0
         self._out = 1.0
+        self._drag = None
 
     def set_image(self, path):
-        self._pix = QPixmap(path)
-        self.update()
+        self._pix = QPixmap(path); self.update()
 
     def set_position(self, frac):
-        self._frac = max(0.0, min(1.0, frac))
-        self.update()
+        self._frac = max(0.0, min(1.0, frac)); self.update()
 
     def set_region(self, in_frac, out_frac):
-        self._in, self._out = in_frac, out_frac
-        self.update()
+        self._in, self._out = in_frac, out_frac; self.update()
+
+    def _hit(self, x):
+        w = self.width() or 1
+        if abs(x - self._in * w) <= self.HANDLE + 2:
+            return "in"
+        if abs(x - self._out * w) <= self.HANDLE + 2:
+            return "out"
+        return "seek"
 
     def paintEvent(self, event):
-        p = QPainter(self)
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
         w, h = self.width(), self.height()
         if self._pix and not self._pix.isNull():
             p.drawPixmap(self.rect(), self._pix)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 150))
-        p.drawRect(QRectF(0, 0, self._in * w, h))
-        p.drawRect(QRectF(self._out * w, 0, w - self._out * w, h))
-        pen = QPen(QColor(ACCENT)); pen.setWidth(2)
-        p.setPen(pen)
-        x = self._frac * w
-        p.drawLine(QPointF(x, 0), QPointF(x, h))
+        xi, xo = self._in * w, self._out * w
+        p.setPen(Qt.NoPen); p.setBrush(QColor(0, 0, 0, 150))
+        p.drawRect(QRectF(0, 0, xi, h)); p.drawRect(QRectF(xo, 0, w - xo, h))
+        pen = QPen(QColor(ACCENT)); pen.setWidth(2); p.setPen(pen); p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(xi, 1, max(1.0, xo - xi), h - 2))
+        p.setPen(Qt.NoPen); p.setBrush(QColor(ACCENT))
+        for x in (xi, xo):
+            p.drawRoundedRect(QRectF(x - 3, 0, 6, h), 2, 2)
+        ph = QPen(QColor("#ffffff")); ph.setWidth(2); p.setPen(ph)
+        p.drawLine(QPointF(self._frac * w, 0), QPointF(self._frac * w, h))
 
     def mousePressEvent(self, event):
-        if self.width():
+        if not self.width():
+            return
+        self._drag = self._hit(event.position().x())
+        if self._drag == "seek":
             self.seek_to.emit(max(0.0, min(1.0, event.position().x() / self.width())))
+
+    def mouseMoveEvent(self, event):
+        w = self.width() or 1
+        frac = max(0.0, min(1.0, event.position().x() / w))
+        if self._drag == "in":
+            self._in = min(frac, self._out - 0.01); self.trim_changed.emit(self._in, self._out); self.update()
+        elif self._drag == "out":
+            self._out = max(frac, self._in + 0.01); self.trim_changed.emit(self._in, self._out); self.update()
+        elif self._drag == "seek":
+            self.seek_to.emit(frac)
+        else:
+            self.setCursor(Qt.SizeHorCursor if self._hit(event.position().x()) in ("in", "out") else Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event):
+        self._drag = None
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -962,16 +992,16 @@ class MainWindow(QMainWindow):
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.view.video_item)
 
-        # transport
+        # transport: play button + time, with the combined scrubber below
         tr = QHBoxLayout()
         self.play_btn = QPushButton("▶"); self.play_btn.setFixedWidth(44); self.play_btn.setEnabled(False)
-        self.seek = QSlider(Qt.Horizontal); self.seek.setRange(0, 1000); self.seek.setEnabled(False)
         self.time_lbl = QLabel("0:00 / 0:00"); self.time_lbl.setObjectName("mono")
-        tr.addWidget(self.play_btn); tr.addWidget(self.seek, 1); tr.addWidget(self.time_lbl)
+        tr.addWidget(self.play_btn); tr.addStretch(1); tr.addWidget(self.time_lbl)
         left.addLayout(tr)
-        self.wave = WaveformBar()
-        self.wave.seek_to.connect(lambda f: self.player.setPosition(int(f * self.duration * 1000)))
-        left.addWidget(self.wave)
+        self.scrub = Scrubber()
+        self.scrub.seek_to.connect(lambda f: self.player.setPosition(int(f * self.duration * 1000)))
+        self.scrub.trim_changed.connect(self._on_scrub_trim)
+        left.addWidget(self.scrub)
         root.addLayout(left, 1)
 
         # right: controls panel
@@ -1056,7 +1086,6 @@ class MainWindow(QMainWindow):
         self.url_input.returnPressed.connect(self.on_load_url)
         self.file_btn.clicked.connect(self.on_open_file)
         self.play_btn.clicked.connect(self.toggle_play)
-        self.seek.sliderMoved.connect(self.on_seek)
         self.set_in_btn.clicked.connect(self.set_in)
         self.set_out_btn.clicked.connect(self.set_out)
         self.zoom.valueChanged.connect(lambda _v: self.set_ratio(self._current_ratio_name()))
@@ -1352,13 +1381,14 @@ class MainWindow(QMainWindow):
             self.view.viewport().update()
         self.player.setSource(QUrl.fromLocalFile(it.path))
         self.player.play()
-        self.seek.setEnabled(True); self.play_btn.setEnabled(True)
+        self.play_btn.setEnabled(True)
+        self.scrub.set_position(0.0)
         self._set_steps_enabled(True)   # steps come alive once a clip is loaded
         self._update_trim_lbl(); self._update_ovr_lbl()
         self.status.setText(f"{self._short(it.name)} · {it.w}×{it.h}")
-        self.wave.set_image("")
+        self.scrub.set_image("")
         self.wf = WaveformWorker(it.path, Path(it.path).parent / "wave.png")
-        self.wf.done.connect(self.wave.set_image)
+        self.wf.done.connect(self.scrub.set_image)
         self.wf.start()
 
     def _remove_item(self):
@@ -1373,7 +1403,8 @@ class MainWindow(QMainWindow):
         else:
             self.clip_path = None
             self.player.setSource(QUrl())
-            self.seek.setEnabled(False); self.play_btn.setEnabled(False)
+            self.play_btn.setEnabled(False)
+            self.scrub.set_image(""); self.scrub.set_position(0.0)
             self._set_steps_enabled(False)
             self.status.setText("Queue empty — add a clip.")
 
@@ -1384,16 +1415,18 @@ class MainWindow(QMainWindow):
         else:
             self.player.play()
 
-    def on_seek(self, v):
-        if self.duration:
-            self.player.setPosition(int(v / 1000 * self.duration * 1000))
-
     def on_position(self, ms):
-        if self.duration and not self.seek.isSliderDown():
-            self.seek.setValue(int(ms / 1000 / self.duration * 1000))
         if self.duration:
-            self.wave.set_position(ms / 1000 / self.duration)
+            self.scrub.set_position(ms / 1000 / self.duration)
         self.time_lbl.setText(f"{self._fmt(ms / 1000)} / {self._fmt(self.duration)}")
+
+    def _on_scrub_trim(self, in_frac, out_frac):
+        if not self.duration:
+            return
+        self.trim_in = in_frac * self.duration
+        self.trim_out = out_frac * self.duration
+        self.trim_lbl.setText(
+            f"In {self._fmt(self.trim_in)} · Out {self._fmt(self.trim_out)} · {self._fmt(self.trim_out - self.trim_in)}")
 
     def keyPressEvent(self, event):
         if self.url_input.hasFocus():
@@ -1477,7 +1510,7 @@ class MainWindow(QMainWindow):
         self.trim_lbl.setText(
             f"In {self._fmt(self.trim_in)} · Out {self._fmt(self.trim_out)} · {self._fmt(self.trim_out - self.trim_in)}")
         if self.duration:
-            self.wave.set_region(self.trim_in / self.duration, self.trim_out / self.duration)
+            self.scrub.set_region(self.trim_in / self.duration, self.trim_out / self.duration)
 
     # --- overrides ---
     def _update_ovr_lbl(self):
@@ -1564,7 +1597,13 @@ class MainWindow(QMainWindow):
             self._exporting = False
             self.export_all_btn.setEnabled(True); self.qbar.hide()
             ok = sum(1 for it in self.queue if it.status == "ok")
-            self.status.setText(f"Batch done: {ok}/{len(self.queue)} exported to {get_output_dir()}")
+            out_dir = get_output_dir()
+            self.status.setText(f"Batch done: {ok}/{len(self.queue)} exported to {out_dir}")
+            if ok and hasattr(os, "startfile"):  # reveal the exports (Explorer focuses an existing window)
+                try:
+                    os.startfile(str(out_dir))
+                except OSError:
+                    pass
             return
         idx = self._eq.pop(0)
         it = self.queue[idx]
