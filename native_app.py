@@ -688,7 +688,38 @@ QCheckBox::indicator:checked {{ background: {ACCENT}; border-radius: 3px; }}
 """
 
 
+def run_selftest(video_path, result_path):
+    """Headless: prove this (possibly frozen) build can decode+play the clip.
+    Writes a one-line result to result_path. Exit 0 = playable."""
+    app = QApplication(sys.argv)
+    player = QMediaPlayer()
+    ao = QAudioOutput(); player.setAudioOutput(ao)
+    vw = QGraphicsVideoItem()
+    scene = QGraphicsScene(); scene.addItem(vw)
+    gv = QGraphicsView(scene); player.setVideoOutput(vw); gv.show()
+    state = {"err": None}
+    player.errorOccurred.connect(lambda e, m: state.__setitem__("err", f"{e} {m}"))
+    player.setSource(QUrl.fromLocalFile(video_path))
+    player.play()
+    code = {"v": 1}
+
+    def check():
+        ok = state["err"] is None and player.hasVideo() and player.position() > 0
+        Path(result_path).write_text(
+            f"error={state['err']} hasVideo={player.hasVideo()} "
+            f"pos={player.position()} OK={ok}", encoding="utf-8")
+        code["v"] = 0 if ok else 2
+        app.quit()
+
+    QTimer.singleShot(4500, check)
+    app.exec()
+    return code["v"]
+
+
 def main():
+    if "--selftest" in sys.argv:
+        i = sys.argv.index("--selftest")
+        return run_selftest(sys.argv[i + 1], sys.argv[i + 2])
     app = QApplication(sys.argv)
     app.setApplicationName("Alert! Alert!")
     app.setStyleSheet(QSS)
