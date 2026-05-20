@@ -229,6 +229,16 @@ def is_safe_job_id(job_id):
 refresh_tool_paths()
 
 
+def _missing_tool_error(cmd):
+    """Turn a FileNotFoundError from a subprocess launch into an actionable message."""
+    tool = Path(str(cmd[0] if isinstance(cmd, (list, tuple)) else cmd)).name
+    tool = tool[:-4] if tool.lower().endswith(".exe") else tool
+    return RuntimeError(
+        f"{tool} was not found. Open Dependency Setup and click "
+        f"'Auto Install Missing', or install {tool} and add it to your PATH."
+    )
+
+
 def run_subprocess(cmd, timeout=30, text=True):
     """Run a subprocess with proper flags to avoid popping up console windows on Windows."""
     kwargs = {
@@ -245,7 +255,10 @@ def run_subprocess(cmd, timeout=30, text=True):
         kwargs["startupinfo"] = startupinfo
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    return subprocess.run(cmd, **kwargs)
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except FileNotFoundError:
+        raise _missing_tool_error(cmd)
 
 
 def run_ffmpeg(args, env, timeout=120):
@@ -259,7 +272,10 @@ def run_ffmpeg(args, env, timeout=120):
     if platform.system() == "Windows":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-    r = subprocess.run(args, **kwargs)
+    try:
+        r = subprocess.run(args, **kwargs)
+    except FileNotFoundError:
+        raise _missing_tool_error(args)
     if r.returncode != 0:
         # Extract meaningful error lines (skip the version banner)
         lines = r.stderr.strip().split("\n")
@@ -286,7 +302,142 @@ def probe_media_duration(input_path):
         return 0.0
 
 
+# Codecs the embedded QtWebEngine build can actually decode (royalty-free only).
+# Anything else (h264/aac/etc.) loads fine in ffmpeg but fails the in-app <video>
+# preview with DEMUXER_ERROR_NO_SUPPORTED_STREAMS.
+PREVIEW_PLAYABLE_VCODECS = {"vp8", "vp9", "av01", "av1", "theora"}
+
+
+def probe_media_file(input_path):
+    """Verify a downloaded media file is real and parseable.
+
+    Returns a dict::
+
+        {ok, error, vcodec, acodec, duration, has_video, has_audio, preview_playable}
+
+    ``ok`` is True only when ffprobe could parse the file and it has a non-zero
+    duration. ``error`` is a user-actionable message when ``ok`` is False.
+    """
+    result = {
+        "ok": False,
+        "error": "",
+        "vcodec": "",
+        "acodec": "",
+        "duration": 0.0,
+        "has_video": False,
+        "has_audio": False,
+        "preview_playable": False,
+    }
+
+    path = Path(input_path)
+    if not path.exists():
+        result["error"] = "downloaded file is missing"
+        return result
+    if path.stat().st_size < 1024:
+        result["error"] = "downloaded file is empty or truncated"
+        return result
+
+    try:
+        r = run_subprocess(
+            [
+                FFPROBE, "-v", "quiet", "-print_format", "json",
+                "-show_streams", "-show_format", str(path),
+            ],
+            timeout=20,
+        )
+    except RuntimeError as e:
+        result["error"] = str(e)
+        return result
+    if r.returncode != 0:
+        result["error"] = "ffprobe could not read the downloaded file (corrupt or unsupported)"
+        return result
+
+    try:
+        info = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        result["error"] = "ffprobe returned unreadable output for the downloaded file"
+        return result
+
+    for stream in info.get("streams", []):
+        codec_type = stream.get("codec_type")
+        if codec_type == "video" and not result["has_video"]:
+            result["has_video"] = True
+            result["vcodec"] = (stream.get("codec_name") or "").lower()
+        elif codec_type == "audio" and not result["has_audio"]:
+            result["has_audio"] = True
+            result["acodec"] = (stream.get("codec_name") or "").lower()
+
+    result["duration"] = float(info.get("format", {}).get("duration", 0) or 0)
+    result["preview_playable"] = result["vcodec"] in PREVIEW_PLAYABLE_VCODECS
+    result["ok"] = True
+    return result
+
+
+PREVIEW_PROXY_NAME = "preview.webm"
+
+
+def ensure_preview_proxy(source_path):
+    """Make a clip the in-app <video> can actually play.
+
+    The embedded QtWebEngine build can't decode H.264/AAC (royalty-free codecs
+    only). For such clips we transcode a sibling ``preview.webm`` (VP9/Opus) used
+    *only* for the live preview — the original file is left untouched so trimming
+    and export keep using it. Returns the proxy ``Path`` on success, or ``None``
+    if transcoding failed (caller should fall back to the honest "no preview"
+    message). An existing, up-to-date proxy is reused.
+    """
+    source = Path(source_path)
+    proxy = source.parent / PREVIEW_PROXY_NAME
+    try:
+        if (proxy.exists()
+                and proxy.stat().st_mtime >= source.stat().st_mtime
+                and proxy.stat().st_size > 1024):
+            return proxy
+    except OSError:
+        pass
+
+    tmp = source.parent / (PREVIEW_PROXY_NAME + ".tmp")
+    args = [
+        FFMPEG, "-y", "-i", str(source),
+        # Downscale large sources so the realtime VP9 encode stays quick; alert
+        # clips are short, so this is cheap.
+        "-vf", "scale='min(1280,iw)':-2",
+        "-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1",
+        "-b:v", "2M",
+        "-c:a", "libopus", "-b:a", "128k",
+        # Force the muxer: the ".tmp" output name hides the .webm extension.
+        "-f", "webm", str(tmp),
+    ]
+    try:
+        r = run_subprocess(args, timeout=300)
+    except RuntimeError:
+        return None
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size < 1024:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return None
+    try:
+        os.replace(str(tmp), str(proxy))
+    except OSError:
+        return None
+    return proxy
+
+
 # ── Serve frontend ──────────────────────────────────────────────
+
+@app.after_request
+def _no_store_static(response):
+    # Local single-user app: never let QtWebEngine cache our own JS/CSS/assets,
+    # so edited or rebuilt files always win (this app has repeatedly hit stale
+    # QtWebEngine cache on CSS/JS).
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 
 @app.route("/")
 def index():
@@ -973,6 +1124,16 @@ def download_separate_audio(job_dir, audio_url, audio_start_sec=None, audio_end_
     audio_files = list(job_dir.glob("audio.*"))
     if not audio_files:
         raise RuntimeError("No audio file downloaded")
+
+    # Verify the file is real audio, not a 0-byte stub or video-only stream.
+    probe = probe_media_file(audio_files[0])
+    if not probe["ok"]:
+        raise RuntimeError(f"Audio download could not be verified: {probe['error']}")
+    if not probe["has_audio"]:
+        raise RuntimeError("Audio download has no audio stream")
+    if probe["duration"] <= 0:
+        raise RuntimeError("Audio download has zero duration")
+
     return str(audio_files[0])
 
 

@@ -9,10 +9,33 @@ from typing import Callable, List, Literal, Optional, Sequence, Tuple
 
 # ── Stderr classification ──────────────────────────────────────────
 
+def looks_like_network_issue(stderr_text: str) -> bool:
+    s = (stderr_text or "").lower()
+    markers = [
+        "failed to resolve",
+        "getaddrinfo failed",
+        "errno 11001",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "no address associated with hostname",
+        "network is unreachable",
+        "connection refused",
+        "failed to establish a new connection",
+        "max retries exceeded",
+        "connection aborted",
+        "connection reset",
+    ]
+    return any(m in s for m in markers)
+
+
 def summarize_ytdlp_error(stderr_text: str) -> str:
     """Return a concise yt-dlp error message from stderr."""
     if not stderr_text:
         return "Download failed"
+
+    if looks_like_network_issue(stderr_text):
+        return ("No internet connection — couldn't reach the video host. "
+                "Check your Wi-Fi/network (or VPN) and try again.")
 
     lines = [ln.strip() for ln in stderr_text.splitlines() if ln.strip()]
     error_lines = [ln for ln in lines if ln.startswith("ERROR:")]
@@ -108,9 +131,15 @@ def build_ytdlp_profiles(
         fallback_compat_format = "b/bestaudio"
     elif media_kind == "video":
         names = _VIDEO_NAMES
-        progressive_format = "b[ext=mp4]/b[ext=webm]/b"
-        sort = "res,ext:mp4:m4a"
-        adaptive_merge_format = "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
+        # The in-app preview uses QtWebEngine, whose open-source build only decodes
+        # royalty-free codecs (VP8/VP9/AV1 + Opus/Vorbis in WebM) — H.264/AAC fail
+        # with DEMUXER_ERROR_NO_SUPPORTED_STREAMS. So prefer a VP9/AV1 + Opus merge
+        # (→ WebM); the final export is re-encoded by ffmpeg regardless, and the
+        # bare `bv*+ba/b` tail still lets odd sources download.
+        vp9_opus = "bv*[vcodec~='^(vp0?9|av01)']+ba[acodec=opus]/bv*+ba/b"
+        progressive_format = vp9_opus
+        sort = "res,vcodec:vp9,acodec:opus,ext:webm"
+        adaptive_merge_format = vp9_opus
         compat_format = adaptive_merge_format
         fallback_standard_format = "bv*+ba/b"
         fallback_standard_sort = "res"
