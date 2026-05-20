@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer
-from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap
+from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
@@ -32,11 +32,11 @@ from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from app import (
     DOWNLOADS_DIR, YTDLP, FFMPEG, FFPROBE, FFMPEG_DIR, run_subprocess,
     probe_media_file, is_youtube_url, has_deno_runtime, get_env, get_output_dir,
-    download_separate_audio,
+    download_separate_audio, INTERNAL_DIR,
 )
 from ytdlp import build_ytdlp_profiles, run_ytdlp_with_retries
 
-ACCENT = "#38BDF8"
+ACCENT = "#5E8FCB"
 
 # label -> aspect ratio (w/h); None = free/original
 RATIOS = {
@@ -565,16 +565,16 @@ class DepsInstallWorker(QThread):
 
 
 class DepCheckWorker(QThread):
-    """Check whether ffmpeg/ffprobe/yt-dlp are available (read-only)."""
-    done = Signal(list)  # list of missing required tool names
+    """Check ffmpeg/ffprobe/yt-dlp availability (read-only). Emits the full
+    results dict so the UI can report status even when everything is present."""
+    done = Signal(dict)
 
     def run(self):
         import app
         try:
-            results = app.run_deps_check(force=True)
-            self.done.emit(app._required_missing(results))
+            self.done.emit(app.run_deps_check(force=True))
         except Exception:
-            self.done.emit([])
+            self.done.emit({})
 
 
 class DepInstallWorker(QThread):
@@ -868,6 +868,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Alert! Alert!")
+        _icon = INTERNAL_DIR / "static" / "favicon.ico"
+        if _icon.exists():
+            self.setWindowIcon(QIcon(str(_icon)))
         self.resize(1240, 740)
         self.clip_path = None
         self.duration = 0.0
@@ -935,11 +938,11 @@ class MainWindow(QMainWindow):
         root.addLayout(left, 1)
 
         # right: controls panel
-        panel = QFrame(); panel.setObjectName("panel"); panel.setFixedWidth(300)
-        p = QVBoxLayout(panel); p.setContentsMargins(16, 16, 16, 16); p.setSpacing(14)
+        panel = QFrame(); panel.setObjectName("panel"); panel.setFixedWidth(320)
+        p = QVBoxLayout(panel); p.setContentsMargins(20, 18, 20, 18); p.setSpacing(11)
 
-        p.addWidget(self._h("Crop"))
-        self.ratio_box = QGridLayout()
+        p.addWidget(self._h("Crop & frame", 1))
+        self.ratio_box = QGridLayout(); self.ratio_box.setSpacing(7)
         self.ratio_btns = {}
         for i, name in enumerate(RATIOS):
             b = QPushButton(name); b.setCheckable(True); b.setObjectName("chip")
@@ -950,16 +953,16 @@ class MainWindow(QMainWindow):
         p.addLayout(self.ratio_box)
         self.zoom = self._slider(p, "Zoom", 30, 100, 100, "%")
 
-        p.addWidget(self._h("Trim"))
-        trbtns = QHBoxLayout()
+        p.addWidget(self._h("Trim", 2))
+        trbtns = QHBoxLayout(); trbtns.setSpacing(8)
         self.set_in_btn = QPushButton("Set In"); self.set_out_btn = QPushButton("Set Out")
         trbtns.addWidget(self.set_in_btn); trbtns.addWidget(self.set_out_btn)
         p.addLayout(trbtns)
         self.trim_lbl = QLabel("In 0:00 · Out 0:00 · 0:00"); self.trim_lbl.setObjectName("mono")
         p.addWidget(self.trim_lbl)
 
-        p.addWidget(self._h("Overrides (optional)"))
-        ov = QGridLayout()
+        p.addWidget(self._h("Overrides — optional"))
+        ov = QGridLayout(); ov.setSpacing(8)
         self.aud_file_btn = QPushButton("Audio file…")
         self.aud_url_btn = QPushButton("Audio URL…")
         self.img_btn = QPushButton("Image…")
@@ -971,7 +974,7 @@ class MainWindow(QMainWindow):
         self.ovr_lbl.setWordWrap(True)
         p.addWidget(self.ovr_lbl)
 
-        p.addWidget(self._h("Export"))
+        p.addWidget(self._h("Export", 3))
         self.res = self._combo(p, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}")
         self.preset = self._combo(p, "Quality (CRF)", ["18", "23", "28"], 1,
                                   {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get)
@@ -1033,12 +1036,13 @@ class MainWindow(QMainWindow):
         a_welcome = QAction("Replay Welcome", self); a_welcome.triggered.connect(self._show_welcome)
         a_about = QAction("About", self); a_about.triggered.connect(self._about)
         a_update = QAction("Update yt-dlp", self); a_update.triggered.connect(self._update_ytdlp)
+        a_check = QAction("Check dependencies", self); a_check.triggered.connect(self._show_deps_status)
         from PySide6.QtCore import QSettings
         a_console = QAction("Show log terminal", self); a_console.setCheckable(True)
         a_console.setChecked(QSettings("deutschmark", "AlertAlert").value("show_console", False, type=bool))
         a_console.toggled.connect(self._toggle_console)
         a_quit = QAction("Quit", self); a_quit.triggered.connect(self.close)
-        for a in (a_open, a_update, a_console, a_welcome, a_about):
+        for a in (a_open, a_check, a_update, a_console, a_welcome, a_about):
             m.addAction(a)
         m.addSeparator(); m.addAction(a_quit)
 
@@ -1057,7 +1061,10 @@ class MainWindow(QMainWindow):
         self._depchk.done.connect(self._deps_checked)
         self._depchk.start()
 
-    def _deps_checked(self, missing):
+    def _deps_checked(self, results):
+        import app
+        self._dep_results = results
+        missing = app._required_missing(results)
         self._missing = list(missing)
         if missing:
             self.deps.set_missing(missing)
@@ -1065,7 +1072,21 @@ class MainWindow(QMainWindow):
             self.deps.show(); self.deps.raise_()
             self.status.setText("One-time setup needed (FFmpeg / yt-dlp).")
         else:
+            self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
             QTimer.singleShot(0, self._maybe_welcome)
+
+    def _show_deps_status(self):
+        import app
+        from PySide6.QtWidgets import QMessageBox
+        results = app.run_deps_check(force=True)
+        lines = []
+        for k, label in (("ffmpeg", "FFmpeg"), ("ffprobe", "ffprobe"),
+                         ("yt-dlp", "yt-dlp"), ("deno", "Deno (optional)")):
+            r = results.get(k, {})
+            mark = "✓" if r.get("installed") else "✗"
+            ver = r.get("version") or ("not found" if not r.get("installed") else "")
+            lines.append(f"{mark}   {label}{('  —  ' + ver) if ver else ''}")
+        QMessageBox.information(self, "Dependency status", "\n".join(lines))
 
     def _install_deps(self):
         tools = []
@@ -1186,22 +1207,33 @@ class MainWindow(QMainWindow):
             self.deps.setGeometry(self.centralWidget().rect())
 
     # --- ui helpers ---
-    def _h(self, text):
-        lbl = QLabel(text.upper()); lbl.setObjectName("section"); return lbl
+    def _h(self, text, num=None):
+        row = QWidget()
+        h = QHBoxLayout(row); h.setContentsMargins(0, 6, 0, 2); h.setSpacing(9)
+        if num is not None:
+            badge = QLabel(str(num)); badge.setObjectName("stepbadge")
+            badge.setFixedSize(22, 22); badge.setAlignment(Qt.AlignCenter)
+            h.addWidget(badge)
+        lbl = QLabel(text.upper()); lbl.setObjectName("section")
+        h.addWidget(lbl); h.addStretch(1)
+        return row
 
     def _slider(self, layout, label, lo, hi, val, suffix=""):
-        row = QHBoxLayout(); row.addWidget(QLabel(label))
+        row = QHBoxLayout(); row.setSpacing(10)
+        lab = QLabel(label); lab.setObjectName("fieldlabel"); row.addWidget(lab)
         s = QSlider(Qt.Horizontal); s.setRange(lo, hi); s.setValue(val)
-        v = QLabel(f"{val}{suffix}"); v.setObjectName("mono"); v.setFixedWidth(44)
+        v = QLabel(f"{val}{suffix}"); v.setObjectName("mono"); v.setFixedWidth(46)
         s.valueChanged.connect(lambda x: v.setText(f"{x}{suffix}"))
         row.addWidget(s, 1); row.addWidget(v); layout.addLayout(row); return s
 
     def _combo(self, layout, label, items, default, fmt):
-        layout.addWidget(QLabel(label))
+        box = QWidget(); v = QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(5)
+        lab = QLabel(label); lab.setObjectName("fieldlabel"); v.addWidget(lab)
         c = QComboBox()
         for it in items:
             c.addItem(fmt(it) if fmt else it, it)
-        c.setCurrentIndex(default); layout.addWidget(c); return c
+        c.setCurrentIndex(default); v.addWidget(c)
+        layout.addWidget(box); return c
 
     # --- source loading ---
     def on_load_url(self):
@@ -1515,45 +1547,55 @@ class MainWindow(QMainWindow):
 
 
 QSS = f"""
-* {{ font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #e8e8ea; }}
-QMainWindow, QWidget {{ background: #14151a; }}
-#panel {{ background: #1b1d24; border-left: 1px solid #2a2d36; }}
-#qpanel {{ background: #1b1d24; border-right: 1px solid #2a2d36; }}
-QListWidget {{ background: #0f1014; border: 1px solid #2a2d36; border-radius: 6px; padding: 4px; }}
-QListWidget::item {{ padding: 6px 6px; border-radius: 4px; }}
-QListWidget::item:selected {{ background: {ACCENT}; color: #14151a; }}
-#section {{ color: {ACCENT}; font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
-#muted {{ color: #8a8f9a; font-size: 12px; }}
+QMainWindow {{ background: #0f1014; }}
+QWidget {{ color: #e6e9ef; font-family: 'Segoe UI', sans-serif; font-size: 13px; }}
+QLabel {{ background: transparent; }}
+#panel {{ background: #15171d; border-left: 1px solid #23262f; }}
+#qpanel {{ background: #15171d; border-right: 1px solid #23262f; }}
+#preview {{ background: #000; border: none; }}
+#section {{ color: #aeb4c0; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }}
+#fieldlabel {{ color: #9aa0ad; font-size: 12px; }}
+#muted {{ color: #868c98; font-size: 12px; }}
 #mono {{ font-family: Consolas, monospace; color: #c7ccd6; }}
-QLineEdit, QComboBox {{ background: #0f1014; border: 1px solid #2a2d36; border-radius: 6px; padding: 7px 10px; }}
+#stepbadge {{ background: {ACCENT}; color: #0f1014; font-weight: 800; font-size: 12px; border-radius: 11px; }}
+QLineEdit, QComboBox {{ background: #0f1014; border: 1px solid #2a2d36; border-radius: 8px; padding: 9px 12px; color: #e6e9ef; }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
-QPushButton {{ background: #262932; border: 1px solid #333742; border-radius: 6px; padding: 7px 12px; }}
-QPushButton:hover {{ border-color: {ACCENT}; }}
-QPushButton:disabled {{ color: #5a5e68; }}
-QPushButton#chip {{ padding: 6px 4px; }}
-QPushButton#chip:checked {{ background: {ACCENT}; color: #14151a; border-color: {ACCENT}; font-weight: 700; }}
-QPushButton#primary {{ background: {ACCENT}; color: #14151a; font-weight: 700; border: none; padding: 11px; font-size: 14px; }}
-QPushButton#primary:hover {{ background: #ffc46b; }}
-QPushButton#primary:disabled {{ background: #4a4536; color: #8a8270; }}
-QProgressBar {{ background: #0f1014; border: none; border-radius: 6px; height: 8px; text-align: center; }}
-QProgressBar::chunk {{ background: {ACCENT}; border-radius: 6px; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{ background: #1a1d25; border: 1px solid #2a2f3a; selection-background-color: {ACCENT}; selection-color: #0f1014; outline: none; }}
+QPushButton {{ background: #232732; border: 1px solid #353b48; border-radius: 8px; padding: 9px 14px; min-height: 18px; color: #dfe3ea; }}
+QPushButton:hover {{ border-color: {ACCENT}; background: #2a2f3c; }}
+QPushButton:disabled {{ color: #5a5f6b; background: #1a1d24; border-color: #262a32; }}
+QPushButton#chip {{ padding: 8px 6px; min-height: 14px; }}
+QPushButton#chip:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
+QPushButton#primary {{ background: {ACCENT}; color: #0f1014; font-weight: 700; border: none; padding: 12px; font-size: 14px; }}
+QPushButton#primary:hover {{ background: #79a6db; }}
+QPushButton#primary:disabled {{ background: #2b3340; color: #6b7280; }}
+QListWidget {{ background: #0f1014; border: 1px solid #2a2d36; border-radius: 8px; padding: 6px; }}
+QListWidget::item {{ padding: 9px 8px; border-radius: 6px; margin-bottom: 2px; color: #dfe3ea; }}
+QListWidget::item:selected {{ background: {ACCENT}; color: #0f1014; }}
+QProgressBar {{ background: #0f1014; border: none; border-radius: 5px; height: 8px; text-align: center; }}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
 QSlider::groove:horizontal {{ height: 4px; background: #2a2d36; border-radius: 2px; }}
-QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; height: 14px; margin: -6px 0; border-radius: 7px; }}
-QCheckBox {{ color: #c7ccd6; }}
-QCheckBox::indicator:checked {{ background: {ACCENT}; border-radius: 3px; }}
-QMenuBar {{ background: #1b1d24; }}
-QMenuBar::item:selected {{ background: {ACCENT}; color: #14151a; }}
-QMenu {{ background: #1b1d24; border: 1px solid #2a2d36; }}
-QMenu::item:selected {{ background: {ACCENT}; color: #14151a; }}
-#welcomeBackdrop {{ background: rgba(10,11,14,0.88); }}
-#welcomeCard {{ background: #1b1d24; border: 1px solid #2f333d; border-radius: 16px; }}
-#welcomeBadge {{ background: {ACCENT}; color: #14151a; font-size: 46px; font-weight: 800; border-radius: 42px; }}
+QSlider::handle:horizontal {{ background: {ACCENT}; width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; }}
+QSlider::handle:horizontal:hover {{ background: #79a6db; }}
+QCheckBox {{ background: transparent; color: #c7ccd6; spacing: 8px; }}
+QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid #353b48; border-radius: 4px; background: #0f1014; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QMenuBar {{ background: #15171d; color: #c7ccd6; }}
+QMenuBar::item {{ padding: 6px 12px; }}
+QMenuBar::item:selected {{ background: {ACCENT}; color: #0f1014; }}
+QMenu {{ background: #1a1d25; border: 1px solid #2a2f3a; padding: 4px; }}
+QMenu::item {{ padding: 7px 22px; border-radius: 4px; }}
+QMenu::item:selected {{ background: {ACCENT}; color: #0f1014; }}
+#welcomeBackdrop {{ background: rgba(8,9,12,0.90); }}
+#welcomeCard {{ background: #15171d; border: 1px solid #2c313c; border-radius: 18px; }}
+#welcomeBadge {{ background: {ACCENT}; color: #0f1014; font-size: 46px; font-weight: 800; border-radius: 42px; }}
 #welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
 #welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
 #welcomeSteps {{ color: #9aa0ab; font-size: 14px; }}
 #depsSources {{ color: #9aa0ab; font-size: 12px; }}
 #depsSources a {{ color: {ACCENT}; }}
-#wave {{ background: #0f1014; border-radius: 6px; }}
+#wave {{ background: #0f1014; border-radius: 8px; }}
 """
 
 
