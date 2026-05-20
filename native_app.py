@@ -36,7 +36,7 @@ from app import (
 )
 from ytdlp import build_ytdlp_profiles, run_ytdlp_with_retries
 
-ACCENT = "#FFB547"
+ACCENT = "#38BDF8"
 
 # label -> aspect ratio (w/h); None = free/original
 RATIOS = {
