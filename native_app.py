@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QProgressBar, QFrame,
+    QListWidget, QListWidgetItem,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -848,11 +849,26 @@ class DepsConsentOverlay(QWidget):
 # ──────────────────────────────────────────────────────────────────────
 # Main window
 # ──────────────────────────────────────────────────────────────────────
+class QueueItem:
+    """One clip in the batch queue, with its own crop/trim/overrides."""
+    def __init__(self, path, w, h, duration):
+        self.path = path
+        self.name = Path(path).name
+        self.w, self.h, self.duration = w, h, duration
+        self.crop = None            # (x, y, w, h) px, or None = full frame
+        self.ratio = "Original"
+        self.trim_in = 0.0
+        self.trim_out = duration
+        self.audio_src = None
+        self.image_src = None
+        self.status = ""            # "", "ok", "fail"
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Alert! Alert!")
-        self.resize(1040, 720)
+        self.resize(1240, 740)
         self.clip_path = None
         self.duration = 0.0
         self.dl = None
@@ -860,19 +876,41 @@ class MainWindow(QMainWindow):
         self.aud_worker = None
         self.audio_src = None
         self.image_src = None
+        self.queue = []
+        self.cur = -1
+        self._exporting = False
 
         central = QWidget()
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # far-left: the batch queue
+        qpanel = QFrame(); qpanel.setObjectName("qpanel"); qpanel.setFixedWidth(210)
+        qv = QVBoxLayout(qpanel); qv.setContentsMargins(12, 12, 12, 12); qv.setSpacing(10)
+        qhdr = QLabel("QUEUE"); qhdr.setObjectName("section")
+        qv.addWidget(qhdr)
+        self.queue_list = QListWidget()
+        self.queue_list.currentRowChanged.connect(self._select_row)
+        qv.addWidget(self.queue_list, 1)
+        qrow = QHBoxLayout()
+        self.remove_btn = QPushButton("Remove"); self.remove_btn.clicked.connect(self._remove_item)
+        qrow.addWidget(self.remove_btn)
+        qv.addLayout(qrow)
+        self.export_all_btn = QPushButton("Export All"); self.export_all_btn.setObjectName("primary")
+        self.export_all_btn.clicked.connect(self._export_all)
+        qv.addWidget(self.export_all_btn)
+        self.qbar = QProgressBar(); self.qbar.setRange(0, 100); self.qbar.hide()
+        qv.addWidget(self.qbar)
+        root.addWidget(qpanel)
+
         # left: preview + transport
         left = QVBoxLayout()
         left.setContentsMargins(12, 12, 12, 12)
         src = QHBoxLayout()
-        self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL…")
-        self.load_btn = QPushButton("Load URL")
-        self.file_btn = QPushButton("Open File…")
+        self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL to add…")
+        self.load_btn = QPushButton("Add URL")
+        self.file_btn = QPushButton("Add file")
         src.addWidget(self.url_input); src.addWidget(self.load_btn); src.addWidget(self.file_btn)
         left.addLayout(src)
 
@@ -944,7 +982,7 @@ class MainWindow(QMainWindow):
         p.addWidget(self.normalize)
 
         p.addStretch(1)
-        self.export_btn = QPushButton("Export Alert"); self.export_btn.setObjectName("primary")
+        self.export_btn = QPushButton("Export current"); self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
         p.addWidget(self.export_btn)
         self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
@@ -1179,34 +1217,79 @@ class MainWindow(QMainWindow):
 
     def on_open_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open video", str(Path.home()),
+            self, "Add video", str(Path.home()),
             "Videos (*.mp4 *.mov *.mkv *.webm *.avi);;All files (*.*)")
         if path:
-            self._loaded(path)
+            self._add_source(path)
 
     def _dl_failed(self, msg):
         self.load_btn.setEnabled(True); self.status.setText(f"Failed: {msg}")
 
-    def _loaded(self, path):
+    def _add_source(self, path):
         self.load_btn.setEnabled(True)
-        self.clip_path = path
+        self.url_input.clear()
         w, h, dur = probe_dimensions(path)
         if not w:
             self.status.setText("Could not read video."); return
-        self.duration = dur
-        self.trim_in, self.trim_out = 0.0, dur
-        self.view.set_source_size(w, h)
-        self.player.setSource(QUrl.fromLocalFile(path))
+        item = QueueItem(path, w, h, dur)
+        self.queue.append(item)
+        self.queue_list.addItem(QListWidgetItem(item.name))
+        self.queue_list.setCurrentRow(len(self.queue) - 1)  # -> _select_row loads it
+        self.status.setText(f"Added {item.name}  ·  {len(self.queue)} in queue")
+
+    # --- queue: select / save / restore ---
+    def _select_row(self, row):
+        if not (0 <= row < len(self.queue)):
+            return
+        self._save_live()
+        self.cur = row
+        self._load_item(self.queue[row])
+
+    def _save_live(self):
+        if not (0 <= self.cur < len(self.queue)) or not self.clip_path:
+            return
+        it = self.queue[self.cur]
+        it.crop = self.view.crop.crop_px()
+        it.ratio = self._current_ratio_name()
+        it.trim_in, it.trim_out = self.trim_in, self.trim_out
+        it.audio_src, it.image_src = self.audio_src, self.image_src
+
+    def _load_item(self, it):
+        self.clip_path = it.path
+        self.duration = it.duration
+        self.trim_in, self.trim_out = it.trim_in, it.trim_out
+        self.audio_src, self.image_src = it.audio_src, it.image_src
+        self.view.set_source_size(it.w, it.h)
+        for n, b in self.ratio_btns.items():
+            b.setChecked(n == it.ratio)
+        self.view.crop.apply_ratio(RATIOS.get(it.ratio), self.zoom.value() / 100)
+        if it.crop:
+            x, y, w, h = it.crop
+            self.view.crop.setRect(QRectF(x, y, w, h))
+            self.view.viewport().update()
+        self.player.setSource(QUrl.fromLocalFile(it.path))
         self.player.play()
         self.seek.setEnabled(True); self.play_btn.setEnabled(True); self.export_btn.setEnabled(True)
-        self.set_ratio("Original")
-        self._update_trim_lbl()
-        self.status.setText(f"{Path(path).name} · {w}×{h} · native preview (no proxy)")
-        # render the waveform strip in the background
+        self._update_trim_lbl(); self._update_ovr_lbl()
+        self.status.setText(f"{it.name} · {it.w}×{it.h}")
         self.wave.set_image("")
-        self.wf = WaveformWorker(path, Path(path).parent / "wave.png")
+        self.wf = WaveformWorker(it.path, Path(it.path).parent / "wave.png")
         self.wf.done.connect(self.wave.set_image)
         self.wf.start()
+
+    def _remove_item(self):
+        row = self.queue_list.currentRow()
+        if row < 0:
+            return
+        self.queue.pop(row)
+        self.cur = -1
+        self.queue_list.takeItem(row)
+        if self.queue:
+            self.queue_list.setCurrentRow(min(row, len(self.queue) - 1))
+        else:
+            self.clip_path = None
+            self.player.setSource(QUrl())
+            self.status.setText("Queue empty.")
 
     # --- playback ---
     def toggle_play(self):
@@ -1230,6 +1313,8 @@ class MainWindow(QMainWindow):
         if self.url_input.hasFocus():
             return super().keyPressEvent(event)
         k = event.key()
+        ctrl = event.modifiers() & Qt.ControlModifier
+        pos = self.player.position()
         if k == Qt.Key_Space:
             self.toggle_play()
         elif k == Qt.Key_I:
@@ -1237,11 +1322,37 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_O:
             self.set_out()
         elif k == Qt.Key_Left:
-            self.player.setPosition(max(0, self.player.position() - 1000))
+            self.player.setPosition(max(0, pos - 1000))
         elif k == Qt.Key_Right:
-            self.player.setPosition(self.player.position() + 1000)
+            self.player.setPosition(pos + 1000)
+        elif k == Qt.Key_Comma:
+            self.player.setPosition(max(0, pos - 100))
+        elif k == Qt.Key_Period:
+            self.player.setPosition(pos + 100)
+        elif k == Qt.Key_J:
+            self.player.setPosition(max(0, pos - 5000))
+        elif k == Qt.Key_L:
+            self.player.setPosition(pos + 5000)
         elif k == Qt.Key_Home:
             self.player.setPosition(0)
+        elif k == Qt.Key_End and self.duration:
+            self.player.setPosition(max(0, int(self.duration * 1000) - 60))
+        elif k == Qt.Key_Up:
+            self.audio.setVolume(min(1.0, self.audio.volume() + 0.05))
+        elif k == Qt.Key_Down:
+            self.audio.setVolume(max(0.0, self.audio.volume() - 0.05))
+        elif k in (Qt.Key_Plus, Qt.Key_Equal):
+            self.zoom.setValue(min(self.zoom.maximum(), self.zoom.value() + 5))
+        elif k == Qt.Key_Minus:
+            self.zoom.setValue(max(self.zoom.minimum(), self.zoom.value() - 5))
+        elif k == Qt.Key_R:
+            self.set_ratio("Original")
+        elif k == Qt.Key_E and ctrl:
+            self._export_all()
+        elif k == Qt.Key_PageDown and self.queue:
+            self.queue_list.setCurrentRow(min(self.cur + 1, len(self.queue) - 1))
+        elif k == Qt.Key_PageUp and self.queue:
+            self.queue_list.setCurrentRow(max(self.cur - 1, 0))
         else:
             return super().keyPressEvent(event)
 
@@ -1348,6 +1459,55 @@ class MainWindow(QMainWindow):
         self.export_btn.setEnabled(True); self.bar.hide()
         self.status.setText(f"Export failed: {msg}")
 
+    # --- export all (batch) ---
+    def _export_all(self):
+        if self._exporting or not self.queue:
+            return
+        self._save_live()
+        self.player.stop()  # release the current file + stop contention during batch
+        self._exporting = True
+        self._eq = list(range(len(self.queue)))
+        self._eq_total = len(self._eq)
+        self._eq_done = 0
+        self._batch_workers = []  # retain refs so finishing QThreads aren't GC'd mid-run
+        self.export_all_btn.setEnabled(False); self.qbar.setValue(0); self.qbar.show()
+        self._export_next()
+
+    def _export_next(self):
+        if not self._eq:
+            self._exporting = False
+            self.export_all_btn.setEnabled(True); self.qbar.hide()
+            ok = sum(1 for it in self.queue if it.status == "ok")
+            self.status.setText(f"Batch done: {ok}/{len(self.queue)} exported to {get_output_dir()}")
+            return
+        idx = self._eq.pop(0)
+        it = self.queue[idx]
+        self.queue_list.item(idx).setText("⏳ " + it.name)
+        out_dir = get_output_dir(); out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"alert_{Path(it.name).stem[:20]}_{uuid.uuid4().hex[:6]}.mp4"
+        crop = it.crop if it.crop else (0, 0, it.w - it.w % 2, it.h - it.h % 2)
+        trim = (it.trim_in, it.trim_out if it.trim_out > it.trim_in else it.duration)
+        worker = ExportWorker(it.path, str(out), crop, trim,
+                              int(self.res.currentData()), int(self.preset.currentData()),
+                              self.normalize.isChecked(), self.fade.currentData(),
+                              int(self.buffer.currentData()), it.audio_src, it.image_src)
+        self._batch_workers.append(worker)  # keep a reference for the whole batch
+        worker.progress.connect(self._eq_progress)
+        worker.finished_ok.connect(lambda p, i=idx: self._eq_item_done(i, True))
+        worker.failed.connect(lambda m, i=idx: self._eq_item_done(i, False))
+        worker.start()
+
+    def _eq_progress(self, pct):
+        overall = int((self._eq_done + pct / 100) / max(1, self._eq_total) * 100)
+        self.qbar.setValue(min(99, overall))
+
+    def _eq_item_done(self, idx, ok):
+        it = self.queue[idx]
+        it.status = "ok" if ok else "fail"
+        self.queue_list.item(idx).setText(("✓ " if ok else "✗ ") + it.name)
+        self._eq_done += 1
+        self._export_next()
+
     @staticmethod
     def _fmt(secs):
         secs = max(0, secs)
@@ -1358,6 +1518,10 @@ QSS = f"""
 * {{ font-family: 'Segoe UI', sans-serif; font-size: 13px; color: #e8e8ea; }}
 QMainWindow, QWidget {{ background: #14151a; }}
 #panel {{ background: #1b1d24; border-left: 1px solid #2a2d36; }}
+#qpanel {{ background: #1b1d24; border-right: 1px solid #2a2d36; }}
+QListWidget {{ background: #0f1014; border: 1px solid #2a2d36; border-radius: 6px; padding: 4px; }}
+QListWidget::item {{ padding: 6px 6px; border-radius: 4px; }}
+QListWidget::item:selected {{ background: {ACCENT}; color: #14151a; }}
 #section {{ color: {ACCENT}; font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
 #muted {{ color: #8a8f9a; font-size: 12px; }}
 #mono {{ font-family: Consolas, monospace; color: #c7ccd6; }}
@@ -1474,6 +1638,46 @@ def run_selftest_deps(result_path):
     return 0 if ok else 2
 
 
+def run_selftest_batch(result_path):
+    """Headless: run the real _export_all over a 2-item queue (distinct crop/trim)
+    in this (possibly frozen) build. Exit 0 = both items exported."""
+    import tempfile
+    from PySide6.QtCore import QTimer
+    app = QApplication(sys.argv)
+    tmp = Path(tempfile.gettempdir())
+    c1, c2 = tmp / "_aa_b1.mp4", tmp / "_aa_b2.mp4"
+    for c, sz, d in ((c1, "1280x720", 3), (c2, "640x480", 3)):
+        subprocess.run([FFMPEG, "-y", "-v", "quiet", "-f", "lavfi", "-i",
+                        f"testsrc=duration={d}:size={sz}:rate=24", "-f", "lavfi", "-i",
+                        f"sine=frequency=300:duration={d}", "-c:v", "libx264", "-pix_fmt",
+                        "yuv420p", "-c:a", "aac", str(c)], env=get_env())
+    w = MainWindow()  # NOT shown — keeps the event loop free
+    it0 = QueueItem(str(c1), 1280, 720, 3.0); it0.crop = (280, 0, 720, 720); it0.trim_in, it0.trim_out = 0.5, 2.0
+    it1 = QueueItem(str(c2), 640, 480, 3.0); it1.crop = (185, 0, 270, 480); it1.trim_in, it1.trim_out = 0.0, 1.5
+    w.queue = [it0, it1]
+    for it in w.queue:
+        w.queue_list.addItem(QListWidgetItem(it.name))
+    w.cur = -1
+    code = {"v": 2}
+
+    def poll():
+        if getattr(w, "_eq_total", 0) and not w._exporting:
+            ok = all(it.status == "ok" for it in w.queue)
+            Path(result_path).write_text(
+                f"ok={ok} statuses={[it.status for it in w.queue]}", encoding="utf-8")
+            code["v"] = 0 if ok else 2
+            app.quit()
+
+    QTimer.singleShot(200, w._export_all)
+    t = QTimer(); t.timeout.connect(poll); t.start(300)
+    QTimer.singleShot(60000, app.quit)
+    app.exec()
+    for c in (c1, c2):
+        try: c.unlink()
+        except OSError: pass
+    return code["v"]
+
+
 def main():
     if "--selftest" in sys.argv:
         i = sys.argv.index("--selftest")
@@ -1481,6 +1685,9 @@ def main():
     if "--selftest-deps" in sys.argv:
         i = sys.argv.index("--selftest-deps")
         return run_selftest_deps(sys.argv[i + 1])
+    if "--selftest-batch" in sys.argv:
+        i = sys.argv.index("--selftest-batch")
+        return run_selftest_batch(sys.argv[i + 1])
     app = QApplication(sys.argv)
     app.setApplicationName("Alert! Alert!")
     app.setStyleSheet(QSS)

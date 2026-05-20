@@ -29,6 +29,7 @@ Alert! Alert! is a small native desktop app for streamers: pull in a clip from a
 - **Trim** with in/out points, a waveform strip, and keyboard shortcuts.
 - **Export** a square alert: resolution + quality presets, audio normalize, fades, and an optional end-buffer freeze.
 - **Overrides** — swap in a separate audio track, or use a still image as the visual with the clip's audio.
+- **Batch queue** — line up multiple clips, each with its own crop/trim/overrides, and Export All in one go.
 
 It's a native PySide6 (Qt Widgets) app — no web server, no embedded browser. The packaged exe is ~72 MB and launches instantly.
 
@@ -62,7 +63,14 @@ Requirements: Windows (primary target), Python 3.10+, and internet access for UR
 | `Space` | Play / pause |
 | `I` / `O` | Set trim in / out at the playhead |
 | `←` / `→` | Seek ∓1s |
-| `Home` | Jump to start |
+| `,` / `.` | Nudge ∓0.1s |
+| `J` / `L` | Seek ∓5s |
+| `Home` / `End` | Jump to start / end |
+| `↑` / `↓` | Volume up / down |
+| `+` / `−` | Zoom in / out |
+| `R` | Reset crop to Original |
+| `PgUp` / `PgDn` | Previous / next clip in queue |
+| `Ctrl`+`E` | Export All |
 
 ---
 
