@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="static/img/logo.png" alt="Alert! Alert! icon" width="220">
+</p>
+
 ```text
     _    _           _   _      _    _           _   _
    / \  | | ___ _ __| |_| |    / \  | | ___ _ __| |_| |
@@ -11,7 +15,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-Backend-green?logo=flask&logoColor=white)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-Powered-orange?logo=ffmpeg&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+![License](https://img.shields.io/badge/License-AGPL_v3-blue)
 
 > **Heads up:** Alert! Alert! used to bundle a Video Editor and a Film Lab. Those have moved to their own repos:
 > - Video Editor → [`clipline`](../clipline)
@@ -105,7 +109,7 @@ The app defaults to `localhost:3000` and searches for another open port automati
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+AGPL-3.0 — see [LICENSE](LICENSE).
 
 Third-party runtime notices are in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
