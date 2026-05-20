@@ -18,8 +18,8 @@ import subprocess
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer
-from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer, QPoint, QRect
+from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
@@ -847,6 +847,97 @@ class DepsConsentOverlay(QWidget):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Guided spotlight tour
+# ──────────────────────────────────────────────────────────────────────
+class TourOverlay(QWidget):
+    """A guided tour: dims the window and spotlights one widget at a time with a
+    floating step card (Back / Next / Skip)."""
+
+    def __init__(self, parent, steps, on_finish=None):
+        super().__init__(parent)
+        self.setObjectName("tourScrim")
+        self._steps = steps  # list of (widget, title, body)
+        self._i = 0
+        self._on_finish = on_finish
+        self._hole = QRect()
+        self.card = QFrame(self); self.card.setObjectName("tourCard"); self.card.setFixedWidth(330)
+        c = QVBoxLayout(self.card); c.setContentsMargins(20, 18, 20, 18); c.setSpacing(9)
+        self.counter = QLabel(); self.counter.setObjectName("tourCounter")
+        self.title = QLabel(); self.title.setObjectName("tourTitle"); self.title.setWordWrap(True)
+        self.body = QLabel(); self.body.setObjectName("tourBody"); self.body.setWordWrap(True)
+        btns = QHBoxLayout(); btns.setSpacing(8)
+        self.skip_btn = QPushButton("Skip"); self.skip_btn.clicked.connect(self.finish)
+        self.back_btn = QPushButton("Back"); self.back_btn.clicked.connect(self._back)
+        self.next_btn = QPushButton("Next"); self.next_btn.setObjectName("primary"); self.next_btn.clicked.connect(self._next)
+        btns.addWidget(self.skip_btn); btns.addStretch(1); btns.addWidget(self.back_btn); btns.addWidget(self.next_btn)
+        for w in (self.counter, self.title, self.body):
+            c.addWidget(w)
+        c.addLayout(btns)
+
+    def start(self):
+        self._i = 0
+        self.setGeometry(self.parent().rect())
+        self.show(); self.raise_()
+        self.relayout()
+
+    def _target_rect(self):
+        w = self._steps[self._i][0]
+        if w is None or not w.isVisible():
+            return QRect()
+        return QRect(w.mapTo(self.parent(), QPoint(0, 0)), w.size())
+
+    def relayout(self):
+        self.setGeometry(self.parent().rect())
+        w, title, body = self._steps[self._i]
+        self.counter.setText(f"STEP {self._i + 1} OF {len(self._steps)}")
+        self.title.setText(title); self.body.setText(body)
+        self.back_btn.setVisible(self._i > 0)
+        self.next_btn.setText("Done" if self._i == len(self._steps) - 1 else "Next")
+        r = self._target_rect()
+        self._hole = r.adjusted(-8, -8, 8, 8) if not r.isNull() else QRect()
+        self.card.adjustSize()
+        cw, ch = self.card.width(), self.card.height()
+        if self._hole.isNull():
+            cx, cy = (self.width() - cw) // 2, (self.height() - ch) // 2
+        else:
+            cx = min(max(self._hole.center().x() - cw // 2, 14), self.width() - cw - 14)
+            if self._hole.bottom() + ch + 16 <= self.height():
+                cy = self._hole.bottom() + 14
+            else:
+                cy = max(14, self._hole.top() - ch - 14)
+        self.card.move(cx, cy)
+        self.update()
+
+    def _next(self):
+        if self._i >= len(self._steps) - 1:
+            self.finish(); return
+        self._i += 1; self.relayout()
+
+    def _back(self):
+        if self._i > 0:
+            self._i -= 1; self.relayout()
+
+    def finish(self):
+        self.hide()
+        if self._on_finish:
+            self._on_finish()
+
+    def paintEvent(self, event):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
+        path = QPainterPath(); path.addRect(QRectF(self.rect()))
+        if not self._hole.isNull():
+            hole = QPainterPath(); hole.addRoundedRect(QRectF(self._hole), 10, 10)
+            path = path.subtracted(hole)
+        p.fillPath(path, QColor(8, 9, 12, 205))
+        if not self._hole.isNull():
+            pen = QPen(QColor(ACCENT)); pen.setWidth(2); p.setPen(pen); p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(self._hole), 10, 10)
+
+    def mousePressEvent(self, event):
+        event.accept()  # swallow clicks on the scrim during the tour
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Main window
 # ──────────────────────────────────────────────────────────────────────
 class QueueItem:
@@ -910,12 +1001,13 @@ class MainWindow(QMainWindow):
         # left: preview + transport
         left = QVBoxLayout()
         left.setContentsMargins(12, 12, 12, 12)
-        src = QHBoxLayout()
+        self.src_row = QWidget()
+        src = QHBoxLayout(self.src_row); src.setContentsMargins(0, 0, 0, 0); src.setSpacing(8)
         self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL to add…")
         self.load_btn = QPushButton("Add URL")
         self.file_btn = QPushButton("Add file")
         src.addWidget(self.url_input); src.addWidget(self.load_btn); src.addWidget(self.file_btn)
-        left.addLayout(src)
+        left.addWidget(self.src_row)
 
         self.view = CropView()
         left.addWidget(self.view, 1)
@@ -942,6 +1034,8 @@ class MainWindow(QMainWindow):
         p = QVBoxLayout(panel); p.setContentsMargins(20, 18, 20, 18); p.setSpacing(11)
 
         p.addWidget(self._h("Crop & frame", 1))
+        self.crop_group = QWidget()
+        cg = QVBoxLayout(self.crop_group); cg.setContentsMargins(0, 0, 0, 0); cg.setSpacing(9)
         self.ratio_box = QGridLayout(); self.ratio_box.setSpacing(7)
         self.ratio_btns = {}
         for i, name in enumerate(RATIOS):
@@ -950,16 +1044,20 @@ class MainWindow(QMainWindow):
             self.ratio_box.addWidget(b, i // 4, i % 4)
             self.ratio_btns[name] = b
         self.ratio_btns["Original"].setChecked(True)
-        p.addLayout(self.ratio_box)
-        self.zoom = self._slider(p, "Zoom", 30, 100, 100, "%")
+        cg.addLayout(self.ratio_box)
+        self.zoom = self._slider(cg, "Zoom", 30, 100, 100, "%")
+        p.addWidget(self.crop_group)
 
         p.addWidget(self._h("Trim", 2))
+        self.trim_group = QWidget()
+        tg = QVBoxLayout(self.trim_group); tg.setContentsMargins(0, 0, 0, 0); tg.setSpacing(8)
         trbtns = QHBoxLayout(); trbtns.setSpacing(8)
         self.set_in_btn = QPushButton("Set In"); self.set_out_btn = QPushButton("Set Out")
         trbtns.addWidget(self.set_in_btn); trbtns.addWidget(self.set_out_btn)
-        p.addLayout(trbtns)
+        tg.addLayout(trbtns)
         self.trim_lbl = QLabel("In 0:00 · Out 0:00 · 0:00"); self.trim_lbl.setObjectName("mono")
-        p.addWidget(self.trim_lbl)
+        tg.addWidget(self.trim_lbl)
+        p.addWidget(self.trim_group)
 
         p.addWidget(self._h("Overrides — optional"))
         ov = QGridLayout(); ov.setSpacing(8)
@@ -975,23 +1073,25 @@ class MainWindow(QMainWindow):
         p.addWidget(self.ovr_lbl)
 
         p.addWidget(self._h("Export", 3))
-        self.res = self._combo(p, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}")
-        self.preset = self._combo(p, "Quality (CRF)", ["18", "23", "28"], 1,
+        self.export_group = QWidget()
+        eg = QVBoxLayout(self.export_group); eg.setContentsMargins(0, 0, 0, 0); eg.setSpacing(10)
+        self.res = self._combo(eg, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}")
+        self.preset = self._combo(eg, "Quality (CRF)", ["18", "23", "28"], 1,
                                   {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get)
-        self.fade = self._combo(p, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize)
-        self.buffer = self._combo(p, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
+        self.fade = self._combo(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize)
+        self.buffer = self._combo(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
                                   lambda v: "None" if v == "0" else f"{v}s freeze")
         self.normalize = QCheckBox("Normalize audio"); self.normalize.setChecked(True)
-        p.addWidget(self.normalize)
-
-        p.addStretch(1)
+        eg.addWidget(self.normalize)
         self.export_btn = QPushButton("Export current"); self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
-        p.addWidget(self.export_btn)
+        eg.addWidget(self.export_btn)
+        p.addWidget(self.export_group)
         self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
         p.addWidget(self.bar)
         self.status = QLabel("Load a clip to begin."); self.status.setWordWrap(True); self.status.setObjectName("muted")
         p.addWidget(self.status)
+        p.addStretch(1)
         root.addWidget(panel)
 
         self.setCentralWidget(central)
@@ -1021,18 +1121,32 @@ class MainWindow(QMainWindow):
         self._last_output = None
         self.welcome = WelcomeOverlay(central, self._dismiss_welcome)
         self.welcome.hide()
-        self.deps = DepsOverlay(central)
-        self.deps.hide()
-        self.deps.install.connect(self._install_deps)
-        self.deps.skip.connect(self._skip_deps)
+        self.deps = None  # created on demand by _check_dependencies (DepsConsentOverlay)
         self.deps_worker = None
         self._missing = []
+        self.tour = TourOverlay(central, [
+            (self.src_row, "Add a clip",
+             "Paste a video URL and hit Add URL — or Add file. Pull from YouTube, TikTok, "
+             "Instagram, Facebook, or straight off your computer."),
+            (self.queue_list, "Your queue",
+             "Every clip you add lands here. Each one keeps its own crop, trim, and audio — "
+             "click a clip to edit it."),
+            (self.crop_group, "Crop & frame",
+             "Pick an aspect ratio and drag the box on the video (or use Zoom) to frame the alert."),
+            (self.trim_group, "Trim",
+             "Play the clip, then Set In / Set Out — or press I and O — to grab the exact moment."),
+            (self.export_group, "Export",
+             "Set size, quality, fades and normalize. Export current for this clip, or Export All "
+             "to render the whole queue at once."),
+        ], on_finish=self._tour_done)
+        self.tour.hide()
         QTimer.singleShot(0, self._check_dependencies)
 
     # --- menu / welcome ---
     def _build_menu(self):
         m = self.menuBar().addMenu("&App")
         a_open = QAction("Open Output Folder", self); a_open.triggered.connect(self._open_output)
+        a_tour = QAction("Take the tour", self); a_tour.triggered.connect(lambda: self.tour.start())
         a_welcome = QAction("Replay Welcome", self); a_welcome.triggered.connect(self._show_welcome)
         a_about = QAction("About", self); a_about.triggered.connect(self._about)
         a_update = QAction("Update yt-dlp", self); a_update.triggered.connect(self._update_ytdlp)
@@ -1042,7 +1156,7 @@ class MainWindow(QMainWindow):
         a_console.setChecked(QSettings("deutschmark", "AlertAlert").value("show_console", False, type=bool))
         a_console.toggled.connect(self._toggle_console)
         a_quit = QAction("Quit", self); a_quit.triggered.connect(self.close)
-        for a in (a_open, a_check, a_update, a_console, a_welcome, a_about):
+        for a in (a_open, a_check, a_update, a_console, a_tour, a_welcome, a_about):
             m.addAction(a)
         m.addSeparator(); m.addAction(a_quit)
 
@@ -1055,26 +1169,7 @@ class MainWindow(QMainWindow):
             detach_console()
         self.status.setText("Log terminal " + ("shown." if on else "hidden (also applies next launch)."))
 
-    # --- dependencies (consent-gated install + yt-dlp update) ---
-    def _check_dependencies(self):
-        self._depchk = DepCheckWorker()
-        self._depchk.done.connect(self._deps_checked)
-        self._depchk.start()
-
-    def _deps_checked(self, results):
-        import app
-        self._dep_results = results
-        missing = app._required_missing(results)
-        self._missing = list(missing)
-        if missing:
-            self.deps.set_missing(missing)
-            self.deps.setGeometry(self.centralWidget().rect())
-            self.deps.show(); self.deps.raise_()
-            self.status.setText("One-time setup needed (FFmpeg / yt-dlp).")
-        else:
-            self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
-            QTimer.singleShot(0, self._maybe_welcome)
-
+    # --- dependency status + yt-dlp update ---
     def _show_deps_status(self):
         import app
         from PySide6.QtWidgets import QMessageBox
@@ -1087,31 +1182,6 @@ class MainWindow(QMainWindow):
             ver = r.get("version") or ("not found" if not r.get("installed") else "")
             lines.append(f"{mark}   {label}{('  —  ' + ver) if ver else ''}")
         QMessageBox.information(self, "Dependency status", "\n".join(lines))
-
-    def _install_deps(self):
-        tools = []
-        if "ffmpeg" in self._missing or "ffprobe" in self._missing:
-            tools.append("ffmpeg")
-        if "yt-dlp" in self._missing:
-            tools.append("yt-dlp")
-        self.deps.set_progress(0, "Starting…")
-        self.deps_worker = DepInstallWorker(tools)
-        self.deps_worker.progress.connect(self.deps.set_progress)
-        self.deps_worker.done.connect(self._deps_installed)
-        self.deps_worker.start()
-
-    def _deps_installed(self, ok, msg):
-        if ok:
-            self.deps.hide()
-            self.status.setText(msg)
-            QTimer.singleShot(0, self._maybe_welcome)
-        else:
-            self.deps.set_failed(msg)
-
-    def _skip_deps(self):
-        self.deps.hide()
-        self.status.setText("Skipped setup — downloads/exports may fail until FFmpeg & yt-dlp are installed.")
-        QTimer.singleShot(0, self._maybe_welcome)
 
     def _update_ytdlp(self):
         self.bar.show(); self.bar.setValue(0)
@@ -1146,6 +1216,10 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QSettings
         QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
         self.welcome.hide()
+        QTimer.singleShot(180, self.tour.start)  # flow straight into the guided tour
+
+    def _tour_done(self):
+        self.status.setText("You're set — add a clip to start.")
 
     # --- dependency consent / install ---
     def _check_dependencies(self):
@@ -1156,6 +1230,7 @@ class MainWindow(QMainWindow):
         missing = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
                    if not results.get(n, {}).get("installed")]
         if not missing:
+            self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
             self._maybe_welcome()
             return
         self._missing_deps = missing
@@ -1205,6 +1280,8 @@ class MainWindow(QMainWindow):
             self.welcome.setGeometry(self.centralWidget().rect())
         if getattr(self, "deps", None) and self.deps.isVisible():
             self.deps.setGeometry(self.centralWidget().rect())
+        if getattr(self, "tour", None) and self.tour.isVisible():
+            self.tour.relayout()
 
     # --- ui helpers ---
     def _h(self, text, num=None):
@@ -1596,6 +1673,11 @@ QMenu::item:selected {{ background: {ACCENT}; color: #0f1014; }}
 #depsSources {{ color: #9aa0ab; font-size: 12px; }}
 #depsSources a {{ color: {ACCENT}; }}
 #wave {{ background: #0f1014; border-radius: 8px; }}
+#tourScrim {{ background: transparent; }}
+#tourCard {{ background: #1a1d25; border: 1px solid #2c313c; border-radius: 12px; }}
+#tourCounter {{ color: {ACCENT}; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; }}
+#tourTitle {{ color: #ffffff; font-size: 17px; font-weight: 800; }}
+#tourBody {{ color: #c7ccd6; font-size: 13px; }}
 """
 
 
