@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer
-from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction
+from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
@@ -423,6 +423,69 @@ class ExportWorker(QThread):
             self.failed.emit(str(e))
 
 
+class WaveformWorker(QThread):
+    """Render the clip's audio waveform to a PNG via ffmpeg showwavespic."""
+    done = Signal(str)
+
+    def __init__(self, src, out):
+        super().__init__()
+        self.src, self.out = src, out
+
+    def run(self):
+        try:
+            run_subprocess([FFMPEG, "-y", "-i", str(self.src), "-filter_complex",
+                            f"showwavespic=s=1200x80:colors={ACCENT}",
+                            "-frames:v", "1", str(self.out)], timeout=60)
+            if Path(self.out).exists():
+                self.done.emit(str(self.out))
+        except Exception:
+            pass
+
+
+class WaveformBar(QWidget):
+    """Waveform strip with a playhead and dimmed out-of-trim regions; click to seek."""
+    seek_to = Signal(float)
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(64)
+        self.setObjectName("wave")
+        self._pix = None
+        self._frac = 0.0
+        self._in = 0.0
+        self._out = 1.0
+
+    def set_image(self, path):
+        self._pix = QPixmap(path)
+        self.update()
+
+    def set_position(self, frac):
+        self._frac = max(0.0, min(1.0, frac))
+        self.update()
+
+    def set_region(self, in_frac, out_frac):
+        self._in, self._out = in_frac, out_frac
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        if self._pix and not self._pix.isNull():
+            p.drawPixmap(self.rect(), self._pix)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 150))
+        p.drawRect(QRectF(0, 0, self._in * w, h))
+        p.drawRect(QRectF(self._out * w, 0, w - self._out * w, h))
+        pen = QPen(QColor(ACCENT)); pen.setWidth(2)
+        p.setPen(pen)
+        x = self._frac * w
+        p.drawLine(QPointF(x, 0), QPointF(x, h))
+
+    def mousePressEvent(self, event):
+        if self.width():
+            self.seek_to.emit(max(0.0, min(1.0, event.position().x() / self.width())))
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Welcome overlay (first run)
 # ──────────────────────────────────────────────────────────────────────
@@ -491,6 +554,9 @@ class MainWindow(QMainWindow):
         self.time_lbl = QLabel("0:00 / 0:00"); self.time_lbl.setObjectName("mono")
         tr.addWidget(self.play_btn); tr.addWidget(self.seek, 1); tr.addWidget(self.time_lbl)
         left.addLayout(tr)
+        self.wave = WaveformBar()
+        self.wave.seek_to.connect(lambda f: self.player.setPosition(int(f * self.duration * 1000)))
+        left.addWidget(self.wave)
         root.addLayout(left, 1)
 
         # right: controls panel
@@ -657,6 +723,11 @@ class MainWindow(QMainWindow):
         self.set_ratio("Original")
         self._update_trim_lbl()
         self.status.setText(f"{Path(path).name} · {w}×{h} · native preview (no proxy)")
+        # render the waveform strip in the background
+        self.wave.set_image("")
+        self.wf = WaveformWorker(path, Path(path).parent / "wave.png")
+        self.wf.done.connect(self.wave.set_image)
+        self.wf.start()
 
     # --- playback ---
     def toggle_play(self):
@@ -672,7 +743,28 @@ class MainWindow(QMainWindow):
     def on_position(self, ms):
         if self.duration and not self.seek.isSliderDown():
             self.seek.setValue(int(ms / 1000 / self.duration * 1000))
+        if self.duration:
+            self.wave.set_position(ms / 1000 / self.duration)
         self.time_lbl.setText(f"{self._fmt(ms / 1000)} / {self._fmt(self.duration)}")
+
+    def keyPressEvent(self, event):
+        if self.url_input.hasFocus():
+            return super().keyPressEvent(event)
+        k = event.key()
+        if k == Qt.Key_Space:
+            self.toggle_play()
+        elif k == Qt.Key_I:
+            self.set_in()
+        elif k == Qt.Key_O:
+            self.set_out()
+        elif k == Qt.Key_Left:
+            self.player.setPosition(max(0, self.player.position() - 1000))
+        elif k == Qt.Key_Right:
+            self.player.setPosition(self.player.position() + 1000)
+        elif k == Qt.Key_Home:
+            self.player.setPosition(0)
+        else:
+            return super().keyPressEvent(event)
 
     def on_player_duration(self, ms):
         if ms > 0 and self.duration <= 0:
@@ -708,6 +800,8 @@ class MainWindow(QMainWindow):
     def _update_trim_lbl(self):
         self.trim_lbl.setText(
             f"In {self._fmt(self.trim_in)} · Out {self._fmt(self.trim_out)} · {self._fmt(self.trim_out - self.trim_in)}")
+        if self.duration:
+            self.wave.set_region(self.trim_in / self.duration, self.trim_out / self.duration)
 
     # --- export ---
     def on_export(self):
@@ -776,6 +870,7 @@ QMenu::item:selected {{ background: {ACCENT}; color: #14151a; }}
 #welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
 #welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
 #welcomeSteps {{ color: #9aa0ab; font-size: 14px; }}
+#wave {{ background: #0f1014; border-radius: 6px; }}
 """
 
 
