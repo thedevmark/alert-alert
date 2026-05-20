@@ -3,11 +3,20 @@
 # Bundles only the Qt modules the native app needs (incl. Multimedia for the
 # QMediaPlayer/QVideoWidget preview). The big WebEngine/QML/Quick stack is
 # explicitly excluded, which is where the ~300 MB of Chromium lived.
+import os
+import glob
+import PySide6
+
+# Qt's ffmpeg media backend needs these codec DLLs alongside the app; the lean
+# (no collect_all) build doesn't grab them automatically.
+_pyside = os.path.dirname(PySide6.__file__)
+_codec_dlls = [(p, '.') for pat in ('av*.dll', 'sw*.dll')
+               for p in glob.glob(os.path.join(_pyside, pat))]
 
 a = Analysis(
     ['native_app.py'],
     pathex=[],
-    binaries=[],
+    binaries=_codec_dlls,
     datas=[('static/favicon.ico', 'static')],  # window/exe icon only
     hiddenimports=[
         'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
