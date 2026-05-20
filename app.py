@@ -1256,8 +1256,12 @@ def bootstrap_runtime():
 
 
 def is_port_available(host, port):
+    # NB: do NOT set SO_REUSEADDR here. On Windows it lets bind() succeed even
+    # when another process is already listening on the port, so this probe would
+    # falsely report an occupied port (e.g. another app on :3000) as free — the
+    # app would then load whatever is really serving there. A plain bind is the
+    # accurate availability test.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
             return True
