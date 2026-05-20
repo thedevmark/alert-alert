@@ -496,6 +496,128 @@ class AudioWorker(QThread):
             self.failed.emit(str(e))
 
 
+class DepsInstallWorker(QThread):
+    """Download + install the missing third-party tools, with byte-progress.
+
+    Only runs AFTER the user has clicked "Download & Install" in the consent
+    panel. Installs only the specific tools reported missing, then refreshes
+    both app.py's globals and this module's stale module-globals so the other
+    workers (DownloadWorker, ExportWorker, probe_dimensions, …) pick up the
+    freshly installed paths.
+    """
+    # tool_name, downloaded_bytes, total_bytes (total 0 => indeterminate)
+    progress = Signal(str, int, int)
+    status = Signal(str)
+    finished_ok = Signal()
+    failed = Signal(str)
+
+    def __init__(self, missing):
+        super().__init__()
+        # missing: set/list of canonical names from run_deps_check
+        self.missing = set(missing)
+
+    def run(self):
+        import app
+        try:
+            need_ffmpeg = bool({"ffmpeg", "ffprobe"} & self.missing)
+            need_ytdlp = "yt-dlp" in self.missing
+
+            if need_ffmpeg:
+                self.status.emit("Downloading FFmpeg…")
+
+                def ff_cb(done, total):
+                    self.progress.emit("Downloading FFmpeg…", done, total)
+
+                app._install_ffmpeg_windows(progress_cb=ff_cb)
+                self.status.emit("Installing FFmpeg…")
+
+            if need_ytdlp:
+                self.status.emit("Downloading yt-dlp…")
+
+                def yt_cb(done, total):
+                    self.progress.emit("Downloading yt-dlp…", done, total)
+
+                app._install_ytdlp_windows(progress_cb=yt_cb)
+                self.status.emit("Installing yt-dlp…")
+
+            # Refresh app.py's globals, then this module's STALE module-globals so
+            # the workers that captured FFMPEG/FFPROBE/YTDLP/FFMPEG_DIR at import
+            # time use the newly installed paths.
+            app.refresh_tool_paths()
+            g = globals()
+            g["FFMPEG"] = app.FFMPEG
+            g["FFPROBE"] = app.FFPROBE
+            g["YTDLP"] = app.YTDLP
+            g["FFMPEG_DIR"] = app.FFMPEG_DIR
+
+            # Verify the tools are actually present now.
+            results = app.run_deps_check(force=True)
+            still_missing = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
+                             if not results.get(n, {}).get("installed")]
+            if still_missing:
+                self.failed.emit(
+                    "Still missing after install: " + ", ".join(still_missing))
+                return
+            self.finished_ok.emit()
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class DepCheckWorker(QThread):
+    """Check whether ffmpeg/ffprobe/yt-dlp are available (read-only)."""
+    done = Signal(list)  # list of missing required tool names
+
+    def run(self):
+        import app
+        try:
+            results = app.run_deps_check(force=True)
+            self.done.emit(app._required_missing(results))
+        except Exception:
+            self.done.emit([])
+
+
+class DepInstallWorker(QThread):
+    """Download + install the requested tools (only after explicit user consent),
+    reporting progress. Refreshes tool paths in BOTH app and this module."""
+    progress = Signal(int, str)
+    done = Signal(bool, str)
+
+    def __init__(self, tools):
+        super().__init__()
+        self.tools = list(tools)  # subset of {"ffmpeg", "yt-dlp"}
+
+    def run(self):
+        import app
+        try:
+            n = max(1, len(self.tools))
+            for i, tool in enumerate(self.tools):
+                base = int(i / n * 100)
+                span = max(1, int(100 / n))
+
+                def cb(downloaded, total, base=base, span=span, tool=tool):
+                    pct = base + (int(downloaded / total * span) if total else 0)
+                    self.progress.emit(min(99, pct), f"Downloading {tool}…")
+
+                if tool == "ffmpeg":
+                    app._install_ffmpeg_windows(progress_cb=cb)
+                elif tool == "yt-dlp":
+                    app._install_ytdlp_windows(progress_cb=cb)
+            app.refresh_tool_paths()
+            g = globals()
+            g["FFMPEG"] = app.FFMPEG; g["FFPROBE"] = app.FFPROBE
+            g["YTDLP"] = app.YTDLP; g["FFMPEG_DIR"] = app.FFMPEG_DIR
+            results = app.run_deps_check(force=True)
+            missing = app._required_missing(results)
+            self.progress.emit(100, "Done")
+            if missing:
+                self.done.emit(False, "Still missing: " + ", ".join(missing))
+            else:
+                ver = (results.get("yt-dlp") or {}).get("version") or ""
+                self.done.emit(True, ("Ready." + (f" yt-dlp {ver}" if ver else "")))
+        except Exception as e:
+            self.done.emit(False, str(e))
+
+
 class WaveformBar(QWidget):
     """Waveform strip with a playhead and dimmed out-of-trim regions; click to seek."""
     seek_to = Signal(float)
@@ -541,6 +663,60 @@ class WaveformBar(QWidget):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Dependency consent overlay (shown only when ffmpeg/yt-dlp are missing)
+# ──────────────────────────────────────────────────────────────────────
+class DepsOverlay(QWidget):
+    """Consent-gated setup. We NEVER download third-party tools without the
+    user explicitly clicking — we just offer to fetch them from their official
+    sources and show progress."""
+    install = Signal()
+    skip = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("welcomeBackdrop")
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
+        card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(540)
+        c = QVBoxLayout(card); c.setContentsMargins(36, 30, 36, 30); c.setSpacing(14)
+        title = QLabel("One-time setup"); title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
+        self.body = QLabel(); self.body.setObjectName("welcomeSub"); self.body.setWordWrap(True); self.body.setAlignment(Qt.AlignCenter)
+        self.sources = QLabel("These are third-party tools, downloaded from their official sources under "
+                              "their own licenses:\nFFmpeg — gyan.dev/ffmpeg/builds   ·   yt-dlp — github.com/yt-dlp/yt-dlp")
+        self.sources.setObjectName("muted"); self.sources.setWordWrap(True); self.sources.setAlignment(Qt.AlignCenter)
+        self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
+        self.status = QLabel(""); self.status.setObjectName("muted"); self.status.setAlignment(Qt.AlignCenter)
+        btns = QHBoxLayout(); btns.setAlignment(Qt.AlignCenter)
+        self.install_btn = QPushButton("Download && Install"); self.install_btn.setObjectName("primary"); self.install_btn.setFixedWidth(230)
+        self.skip_btn = QPushButton("Skip for now")
+        self.install_btn.clicked.connect(self.install.emit)
+        self.skip_btn.clicked.connect(self.skip.emit)
+        btns.addWidget(self.install_btn); btns.addWidget(self.skip_btn)
+        for w in (title, self.body, self.sources, self.bar, self.status):
+            c.addWidget(w, alignment=Qt.AlignCenter)
+        c.addLayout(btns)
+        outer.addWidget(card)
+
+    def set_missing(self, missing):
+        pretty = []
+        if "ffmpeg" in missing or "ffprobe" in missing:
+            pretty.append("FFmpeg")
+        if "yt-dlp" in missing:
+            pretty.append("yt-dlp")
+        joined = " and ".join(pretty) if pretty else "some tools"
+        it = "them" if len(pretty) > 1 else "it"
+        self.body.setText(f"Alert! Alert! needs <b>{joined}</b> to download and export clips. "
+                          f"Click below and we'll download {it} for you — nothing is downloaded until you do.")
+
+    def set_progress(self, pct, label):
+        self.bar.show(); self.bar.setValue(pct); self.status.setText(label)
+        self.install_btn.setEnabled(False); self.skip_btn.setEnabled(False)
+
+    def set_failed(self, msg):
+        self.status.setText(msg + "  — you can retry.")
+        self.install_btn.setEnabled(True); self.skip_btn.setEnabled(True)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Welcome overlay (first run)
 # ──────────────────────────────────────────────────────────────────────
 class WelcomeOverlay(QWidget):
@@ -563,6 +739,110 @@ class WelcomeOverlay(QWidget):
         for w in (badge, title, sub, steps, btn):
             c.addWidget(w, alignment=Qt.AlignCenter)
         outer.addWidget(card)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Dependency consent overlay (shown only when ffmpeg/ytdlp are missing)
+# ──────────────────────────────────────────────────────────────────────
+FFMPEG_SOURCE_URL = "https://www.gyan.dev/ffmpeg/builds/"
+YTDLP_SOURCE_URL = "https://github.com/yt-dlp/yt-dlp"
+
+
+class DepsConsentOverlay(QWidget):
+    """Non-dismissable-until-resolved consent panel. Nothing downloads until the
+    user explicitly clicks "Download & Install" — this explicit consent is the
+    whole point (we download third-party software on the user's behalf)."""
+
+    def __init__(self, parent, missing, on_consent, on_skip):
+        super().__init__(parent)
+        self.setObjectName("welcomeBackdrop")
+        self._on_consent = on_consent
+        self._on_skip = on_skip
+
+        names = []
+        if {"ffmpeg", "ffprobe"} & set(missing):
+            names.append("FFmpeg")
+        if "yt-dlp" in missing:
+            names.append("yt-dlp")
+        if len(names) == 2:
+            which = "FFmpeg and yt-dlp"
+        elif names:
+            which = names[0]
+        else:
+            which = "some tools"
+
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
+        card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(520)
+        c = QVBoxLayout(card); c.setContentsMargins(36, 36, 36, 32); c.setSpacing(14)
+
+        badge = QLabel("!"); badge.setObjectName("welcomeBadge")
+        badge.setAlignment(Qt.AlignCenter); badge.setFixedSize(72, 72)
+        title = QLabel("One-time setup")
+        title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
+
+        body = QLabel(
+            f"Alert! Alert! needs <b>{which}</b> to download and export clips, "
+            f"but {'they are' if len(names) == 2 else 'it is'} not installed on this PC.<br><br>"
+            "Alert! Alert! can download these for you. They're third-party tools "
+            "with their own licenses, fetched from their official sources:")
+        body.setObjectName("welcomeSub"); body.setWordWrap(True); body.setAlignment(Qt.AlignCenter)
+
+        sources = QLabel(self._sources_html(missing))
+        sources.setObjectName("depsSources"); sources.setWordWrap(True)
+        sources.setAlignment(Qt.AlignCenter); sources.setOpenExternalLinks(True)
+        sources.setTextInteractionFlags(Qt.TextBrowserInteraction)
+
+        self.status_lbl = QLabel(""); self.status_lbl.setObjectName("mono")
+        self.status_lbl.setAlignment(Qt.AlignCenter); self.status_lbl.hide()
+        self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        self.skip_btn = QPushButton("Skip (install manually)")
+        self.skip_btn.clicked.connect(lambda: self._on_skip and self._on_skip())
+        self.install_btn = QPushButton("Download && Install")
+        self.install_btn.setObjectName("primary")
+        self.install_btn.clicked.connect(lambda: self._on_consent and self._on_consent())
+        btn_row.addWidget(self.skip_btn); btn_row.addWidget(self.install_btn, 1)
+
+        for w in (badge, title, body, sources):
+            c.addWidget(w, alignment=Qt.AlignCenter)
+        c.addWidget(self.status_lbl)
+        c.addWidget(self.bar)
+        c.addLayout(btn_row)
+        outer.addWidget(card)
+
+    @staticmethod
+    def _sources_html(missing):
+        rows = []
+        if {"ffmpeg", "ffprobe"} & set(missing):
+            rows.append(f'FFmpeg — <a href="{FFMPEG_SOURCE_URL}">{FFMPEG_SOURCE_URL}</a>')
+        if "yt-dlp" in missing:
+            rows.append(f'yt-dlp — <a href="{YTDLP_SOURCE_URL}">{YTDLP_SOURCE_URL}</a>')
+        return "<br>".join(rows)
+
+    def set_busy(self, busy):
+        self.install_btn.setEnabled(not busy)
+        self.skip_btn.setEnabled(not busy)
+        self.status_lbl.setVisible(busy)
+        self.bar.setVisible(busy)
+
+    def set_progress(self, label, done, total):
+        if total > 0:
+            self.bar.setRange(0, 100)
+            self.bar.setValue(min(100, int(done / total * 100)))
+            mb = done / (1024 * 1024)
+            tmb = total / (1024 * 1024)
+            self.status_lbl.setText(f"{label}  {mb:.1f} / {tmb:.1f} MB")
+        else:
+            # indeterminate — server gave no Content-Length
+            self.bar.setRange(0, 0)
+            self.status_lbl.setText(label)
+
+    def set_status(self, text):
+        self.status_lbl.setText(text)
+        if not self.bar.isVisible():
+            self.bar.show()
+        self.bar.setRange(0, 0)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -700,7 +980,13 @@ class MainWindow(QMainWindow):
         self._last_output = None
         self.welcome = WelcomeOverlay(central, self._dismiss_welcome)
         self.welcome.hide()
-        QTimer.singleShot(0, self._maybe_welcome)
+        self.deps = DepsOverlay(central)
+        self.deps.hide()
+        self.deps.install.connect(self._install_deps)
+        self.deps.skip.connect(self._skip_deps)
+        self.deps_worker = None
+        self._missing = []
+        QTimer.singleShot(0, self._check_dependencies)
 
     # --- menu / welcome ---
     def _build_menu(self):
@@ -708,10 +994,75 @@ class MainWindow(QMainWindow):
         a_open = QAction("Open Output Folder", self); a_open.triggered.connect(self._open_output)
         a_welcome = QAction("Replay Welcome", self); a_welcome.triggered.connect(self._show_welcome)
         a_about = QAction("About", self); a_about.triggered.connect(self._about)
+        a_update = QAction("Update yt-dlp", self); a_update.triggered.connect(self._update_ytdlp)
+        from PySide6.QtCore import QSettings
+        a_console = QAction("Show log terminal", self); a_console.setCheckable(True)
+        a_console.setChecked(QSettings("deutschmark", "AlertAlert").value("show_console", False, type=bool))
+        a_console.toggled.connect(self._toggle_console)
         a_quit = QAction("Quit", self); a_quit.triggered.connect(self.close)
-        for a in (a_open, a_welcome, a_about):
+        for a in (a_open, a_update, a_console, a_welcome, a_about):
             m.addAction(a)
         m.addSeparator(); m.addAction(a_quit)
+
+    def _toggle_console(self, on):
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("show_console", on)
+        if on:
+            attach_console()
+        else:
+            detach_console()
+        self.status.setText("Log terminal " + ("shown." if on else "hidden (also applies next launch)."))
+
+    # --- dependencies (consent-gated install + yt-dlp update) ---
+    def _check_dependencies(self):
+        self._depchk = DepCheckWorker()
+        self._depchk.done.connect(self._deps_checked)
+        self._depchk.start()
+
+    def _deps_checked(self, missing):
+        self._missing = list(missing)
+        if missing:
+            self.deps.set_missing(missing)
+            self.deps.setGeometry(self.centralWidget().rect())
+            self.deps.show(); self.deps.raise_()
+            self.status.setText("One-time setup needed (FFmpeg / yt-dlp).")
+        else:
+            QTimer.singleShot(0, self._maybe_welcome)
+
+    def _install_deps(self):
+        tools = []
+        if "ffmpeg" in self._missing or "ffprobe" in self._missing:
+            tools.append("ffmpeg")
+        if "yt-dlp" in self._missing:
+            tools.append("yt-dlp")
+        self.deps.set_progress(0, "Starting…")
+        self.deps_worker = DepInstallWorker(tools)
+        self.deps_worker.progress.connect(self.deps.set_progress)
+        self.deps_worker.done.connect(self._deps_installed)
+        self.deps_worker.start()
+
+    def _deps_installed(self, ok, msg):
+        if ok:
+            self.deps.hide()
+            self.status.setText(msg)
+            QTimer.singleShot(0, self._maybe_welcome)
+        else:
+            self.deps.set_failed(msg)
+
+    def _skip_deps(self):
+        self.deps.hide()
+        self.status.setText("Skipped setup — downloads/exports may fail until FFmpeg & yt-dlp are installed.")
+        QTimer.singleShot(0, self._maybe_welcome)
+
+    def _update_ytdlp(self):
+        self.bar.show(); self.bar.setValue(0)
+        self.status.setText("Updating yt-dlp…")
+        self._ytupd = DepInstallWorker(["yt-dlp"])
+        self._ytupd.progress.connect(lambda p, l: (self.bar.setValue(p), self.status.setText(l)))
+        self._ytupd.done.connect(
+            lambda ok, msg: (self.bar.hide(),
+                             self.status.setText(("yt-dlp updated. " + msg) if ok else ("Update failed: " + msg))))
+        self._ytupd.start()
 
     def _open_output(self):
         d = get_output_dir(); d.mkdir(parents=True, exist_ok=True)
@@ -737,10 +1088,64 @@ class MainWindow(QMainWindow):
         QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
         self.welcome.hide()
 
+    # --- dependency consent / install ---
+    def _check_dependencies(self):
+        """Startup: detect missing tools. Install nothing here — only show the
+        consent panel if something is missing."""
+        import app
+        results = app.run_deps_check(force=True)
+        missing = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
+                   if not results.get(n, {}).get("installed")]
+        if not missing:
+            self._maybe_welcome()
+            return
+        self._missing_deps = missing
+        self.deps = DepsConsentOverlay(
+            self.centralWidget(), missing, self._on_deps_consent, self._on_deps_skip)
+        self.deps.setGeometry(self.centralWidget().rect())
+        self.deps.show(); self.deps.raise_()
+
+    def _on_deps_consent(self):
+        self.deps.set_busy(True)
+        self.deps_worker = DepsInstallWorker(self._missing_deps)
+        self.deps_worker.progress.connect(self.deps.set_progress)
+        self.deps_worker.status.connect(self.deps.set_status)
+        self.deps_worker.finished_ok.connect(self._on_deps_ready)
+        self.deps_worker.failed.connect(self._on_deps_failed)
+        self.deps_worker.start()
+
+    def _on_deps_ready(self):
+        if self.deps:
+            self.deps.hide(); self.deps.deleteLater(); self.deps = None
+        self.status.setText("Ready — dependencies installed.")
+        self._maybe_welcome()
+
+    def _on_deps_failed(self, msg):
+        from PySide6.QtWidgets import QMessageBox
+        self.deps.set_busy(False)
+        QMessageBox.warning(
+            self, "Install failed",
+            f"Could not install the required tools:\n\n{msg}\n\n"
+            "You can retry, or install them manually:\n"
+            f"• FFmpeg: {FFMPEG_SOURCE_URL}\n"
+            f"• yt-dlp: {YTDLP_SOURCE_URL}")
+
+    def _on_deps_skip(self):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "Tools not installed",
+            "Skipping setup. Downloads and exports will fail until FFmpeg "
+            "and yt-dlp are installed and available.")
+        if self.deps:
+            self.deps.hide(); self.deps.deleteLater(); self.deps = None
+        self._maybe_welcome()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if getattr(self, "welcome", None) and self.welcome.isVisible():
             self.welcome.setGeometry(self.centralWidget().rect())
+        if getattr(self, "deps", None) and self.deps.isVisible():
+            self.deps.setGeometry(self.centralWidget().rect())
 
     # --- ui helpers ---
     def _h(self, text):
@@ -982,6 +1387,8 @@ QMenu::item:selected {{ background: {ACCENT}; color: #14151a; }}
 #welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
 #welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
 #welcomeSteps {{ color: #9aa0ab; font-size: 14px; }}
+#depsSources {{ color: #9aa0ab; font-size: 12px; }}
+#depsSources a {{ color: {ACCENT}; }}
 #wave {{ background: #0f1014; border-radius: 6px; }}
 """
 
@@ -1014,6 +1421,42 @@ def run_selftest(video_path, result_path):
     return code["v"]
 
 
+BANNER = r"""
+    _    _           _   _      _    _           _   _
+   / \  | | ___ _ __| |_| |    / \  | | ___ _ __| |_| |
+  / _ \ | |/ _ \ '__| __| |   / _ \ | |/ _ \ '__| __| |
+ / ___ \| |  __/ |  | |_|_|  / ___ \| |  __/ |  | |_|_|
+/_/   \_\_|\___|_|   \__(_) /_/   \_\_|\___|_|   \__(_)
+
+  Alert! Alert! — log terminal. Close this window to hide it next launch.
+"""
+
+
+def attach_console():
+    """Allocate a console window for this (windowed) app and route stdout/stderr
+    to it, then print the banner. Windows only. Returns True on success."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    k = ctypes.windll.kernel32
+    if not k.GetConsoleWindow():
+        if not k.AllocConsole():
+            return False
+    try:
+        sys.stdout = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
+        sys.stderr = open("CONOUT$", "w", buffering=1, encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    print(BANNER, flush=True)
+    return True
+
+
+def detach_console():
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.kernel32.FreeConsole()
+
+
 def main():
     if "--selftest" in sys.argv:
         i = sys.argv.index("--selftest")
@@ -1021,6 +1464,11 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Alert! Alert!")
     app.setStyleSheet(QSS)
+    # Optional log terminal alongside the app (off by default).
+    from PySide6.QtCore import QSettings
+    if QSettings("deutschmark", "AlertAlert").value("show_console", False, type=bool) \
+            or "--console" in sys.argv:
+        attach_console()
     win = MainWindow()
     win.show()
     return app.exec()
