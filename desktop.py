@@ -81,17 +81,14 @@ class DesktopWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         self.view = QWebEngineView(self)
-        # Named profile (NOT off-the-record) so QtWebEngine's proprietary
-        # media decoders stay wired up — off-the-record profiles silently
-        # break <video src> playback from the local Flask origin. Memory
-        # cache + no persistent cookies still prevent stale state from
-        # prior installs from leaking across launches.
-        #
-        # NB: clearHttpCache() used to live here as belt-and-suspenders, but
-        # it raced the first setUrl() on cold launch and produced a stuck
-        # white screen until Reload. Memory cache always starts empty on a
-        # fresh process anyway, so the explicit clear was a no-op + a race.
-        self.profile = QWebEngineProfile("alert-alert", self.view)
+        # Use the DEFAULT profile with memory-cache + no-persistent-cookies, so
+        # stale state from prior installs can't leak across launches.
+        # NOTE: this open-source QtWebEngine build ships no proprietary codecs, so
+        # the <video> preview cannot decode H.264/AAC regardless of which profile
+        # is used. Clips in an unplayable codec are transcoded to a WebM preview
+        # proxy server-side (see ensure_preview_proxy in app.py); the profile
+        # choice does not affect codec support.
+        self.profile = QWebEngineProfile.defaultProfile()
         self.profile.setHttpCacheType(QWebEngineProfile.MemoryHttpCache)
         self.profile.setPersistentCookiesPolicy(QWebEngineProfile.NoPersistentCookies)
         self.page = DesktopPage(self.profile, self.view)

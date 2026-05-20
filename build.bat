@@ -54,6 +54,8 @@ if exist "%EXE_PATH%" (
     echo If antivirus is scanning the file, wait a few seconds and run again.
     pause
     exit /b 1
+) else (
+    echo No existing EXE found - starting a fresh build.
 )
 
 :exe_unlocked

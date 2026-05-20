@@ -1092,8 +1092,15 @@ button:disabled {
 
 #download-status {
     margin-top: 8px;
+    min-height: 18px;
     font-size: 13px;
     color: var(--text-muted);
+}
+
+/* Keep the status line's space reserved so revealing it doesn't grow the step box. */
+#download-status.hidden {
+    display: block;
+    visibility: hidden;
 }
 
 /* ── Crop preview ─────────────────────────────────────────────── */
@@ -1726,9 +1733,13 @@ input[type="file"]::file-selector-button {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg-base);
     padding: 40px 24px;
-    animation: welcome-fade-in 0.25s ease;
+    overflow: hidden;
+    /* Warm, branded backdrop matching the app icon's navy + amber. */
+    background:
+        radial-gradient(120% 95% at 50% 26%, rgba(255, 181, 71, 0.14), transparent 58%),
+        radial-gradient(150% 130% at 50% 120%, #182739 0%, #0D1521 62%);
+    animation: welcome-fade-in 0.4s ease;
 }
 
 .welcome-screen.hidden {
@@ -1741,64 +1752,163 @@ input[type="file"]::file-selector-button {
 }
 
 .welcome-content {
-    max-width: 640px;
+    max-width: 600px;
     text-align: center;
+    position: relative;
+}
+
+/* App icon — the hero. Soft amber glow + a slow confident float. */
+.welcome-icon-wrap {
+    display: inline-block;
+    position: relative;
+    margin: 0 0 26px;
+    animation: welcome-icon-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.welcome-icon-wrap::before {
+    content: "";
+    position: absolute;
+    inset: -24%;
+    z-index: -1;
+    background: radial-gradient(circle, rgba(255, 181, 71, 0.30), transparent 68%);
+    filter: blur(8px);
+    animation: welcome-glow 5.5s ease-in-out infinite;
+}
+
+.welcome-icon {
+    display: block;
+    width: 124px;
+    height: 124px;
+    animation: welcome-float 6s ease-in-out 0.7s infinite;
 }
 
 .welcome-logo {
-    font-size: 64px;
+    font-size: 28px;
     font-weight: 900;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
     color: var(--text);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
+    animation: welcome-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
 }
 
+/* Two bangs echo the icon's amber + off-white "eyes". */
+.welcome-bang-a { color: #FFB547; }
+.welcome-bang-b { color: #EEF4FA; }
+
 .welcome-headline {
-    font-size: 32px;
+    font-size: 34px;
     font-weight: 800;
     margin: 0 0 16px;
     color: var(--text);
-    line-height: 1.2;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    animation: welcome-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
 }
 
 .welcome-sub {
-    font-size: 17px;
+    font-size: 16px;
     line-height: 1.55;
     color: var(--text-muted);
-    margin: 0 0 36px;
+    margin: 0 auto 32px;
+    max-width: 460px;
+    animation: welcome-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.28s both;
 }
 
+/* Strong, friendly amber CTA — confident, not a weak pill. */
 .welcome-cta {
-    background: var(--accent);
-    color: var(--accent-ink);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: linear-gradient(180deg, #FFC468 0%, #FFB547 100%);
+    color: #0D1521;
     border: none;
-    border-radius: 999px;
-    padding: 16px 40px;
+    border-radius: 14px;
+    padding: 16px 32px;
     font-size: 17px;
     font-weight: 800;
+    letter-spacing: 0.01em;
     cursor: pointer;
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
-    transition: background 0.15s, transform 0.1s;
+    box-shadow: 0 12px 30px rgba(255, 181, 71, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease, filter 0.18s ease;
+    animation: welcome-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.36s both;
 }
 
 .welcome-cta:hover {
-    background: var(--accent-hover);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 18px 44px rgba(255, 181, 71, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    filter: brightness(1.04);
+}
+
+.welcome-cta:active {
+    transform: translateY(0);
+    box-shadow: 0 6px 18px rgba(255, 181, 71, 0.32);
+}
+
+.welcome-cta:focus-visible {
+    outline: 3px solid rgba(255, 181, 71, 0.65);
+    outline-offset: 3px;
+}
+
+.welcome-cta-arrow {
+    font-size: 19px;
+    transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.welcome-cta:hover .welcome-cta-arrow {
+    transform: translateX(4px);
 }
 
 .welcome-skip {
     display: block;
-    margin: 18px auto 0;
+    margin: 20px auto 0;
     background: transparent;
     border: none;
     color: var(--text-muted);
     font-size: 14px;
     cursor: pointer;
-    text-decoration: underline;
+    text-decoration: none;
+    transition: color 0.15s ease;
+    animation: welcome-rise 0.6s ease 0.46s both;
 }
 
 .welcome-skip:hover {
     color: var(--text);
+    text-decoration: underline;
+}
+
+@keyframes welcome-rise {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes welcome-icon-in {
+    from { opacity: 0; transform: scale(0.82) translateY(12px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes welcome-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-9px); }
+}
+
+@keyframes welcome-glow {
+    0%, 100% { opacity: 0.7; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.06); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .welcome-screen,
+    .welcome-icon-wrap,
+    .welcome-icon,
+    .welcome-icon-wrap::before,
+    .welcome-logo,
+    .welcome-headline,
+    .welcome-sub,
+    .welcome-cta,
+    .welcome-skip {
+        animation: none;
+    }
+    .welcome-cta-arrow { transition: none; }
 }
 
 /* ── Onboarding: Dependency Gate ───────────────────────────── */

@@ -41,8 +41,8 @@ const App = (() => {
             target: "#step-1",
             title: "Load your source clip",
             body: "Paste a video URL and click Load Video. We've pre-filled a sample so you can try the tour without finding your own clip.",
-            advanceOn: "app:url-validated",
-            hint: "Click Load Video to continue ↓",
+            advanceOn: "app:preview-loaded",
+            hint: "Click Load Video to continue",
         },
         {
             target: "#step-2",
@@ -68,7 +68,7 @@ const App = (() => {
             title: "Render and download",
             body: "Click Process Video to render your first alert. We'll wait while it processes.",
             advanceOn: "app:processing-complete",
-            hint: "Click Process Video to continue ↓",
+            hint: "Click Process Video to continue",
         },
     ];
 
@@ -1018,6 +1018,7 @@ const App = (() => {
     // ── Tour: coach-mark engine ─────────────────────────────────
     let tourReflowBound = false;
     let tourCurrentTarget = null;
+    let tourResizeObserver = null;
 
     function showTourOverlay() {
         const el = $("tour-overlay");
@@ -1035,10 +1036,18 @@ const App = (() => {
     function hideTourOverlay() {
         const el = $("tour-overlay");
         if (el) {
+            // Move focus out first — aria-hiding an ancestor of the focused
+            // element (e.g. the Skip button) is invalid and the browser blocks it.
+            if (el.contains(document.activeElement)) {
+                document.activeElement.blur();
+            }
             el.classList.add("hidden");
             el.setAttribute("aria-hidden", "true");
         }
         tourCurrentTarget = null;
+        if (tourResizeObserver) {
+            tourResizeObserver.disconnect();
+        }
         if (tourReflowBound) {
             window.removeEventListener("scroll", reflowSpotlight, true);
             window.removeEventListener("resize", reflowSpotlight);
@@ -1092,22 +1101,39 @@ const App = (() => {
         const vh = window.innerHeight;
 
         // Prefer right of target; fall back to left, then below, then above.
-        let top, left;
+        // Track placement so the hint arrow can point back at the target.
+        let top, left, placement;
         if (targetRect.right + margin + tw <= vw) {
             left = targetRect.right + margin;
             top = Math.min(vh - th - margin, Math.max(margin, targetRect.top));
+            placement = "right"; // tooltip is right of target → target is left
         } else if (targetRect.left - margin - tw >= 0) {
             left = targetRect.left - margin - tw;
             top = Math.min(vh - th - margin, Math.max(margin, targetRect.top));
+            placement = "left";
         } else if (targetRect.bottom + margin + th <= vh) {
             left = Math.min(vw - tw - margin, Math.max(margin, targetRect.left));
             top = targetRect.bottom + margin;
+            placement = "below";
         } else {
             left = Math.min(vw - tw - margin, Math.max(margin, targetRect.left));
             top = Math.max(margin, targetRect.top - th - margin);
+            placement = "above";
         }
         tooltip.style.top = top + "px";
         tooltip.style.left = left + "px";
+        updateHintArrow(placement);
+    }
+
+    // Arrow points from the tooltip toward the target.
+    const HINT_ARROWS = { right: "←", left: "→", below: "↑", above: "↓" };
+
+    function updateHintArrow(placement) {
+        const hint = $("tour-tooltip-hint");
+        const step = TOUR_STEPS[tourStepIndex];
+        if (!hint || !step || !step.hint) return;
+        const arrow = HINT_ARROWS[placement] || "";
+        hint.textContent = arrow ? `${step.hint} ${arrow}` : step.hint;
     }
 
     function waitForTarget(selector, timeoutMs = 5000) {
@@ -1133,8 +1159,20 @@ const App = (() => {
         const target = await waitForTarget(selector);
         if (!target) return null;
         tourCurrentTarget = target;
+        observeTourTarget(target);
         positionSpotlight(target);
         return target;
+    }
+
+    // Keep the spotlight ring/scrim sized to the target as it grows — e.g. when
+    // clicking Load Video expands step 1 with the download-status line.
+    function observeTourTarget(el) {
+        if (!("ResizeObserver" in window)) return;
+        if (!tourResizeObserver) {
+            tourResizeObserver = new ResizeObserver(() => reflowSpotlight());
+        }
+        tourResizeObserver.disconnect();
+        tourResizeObserver.observe(el);
     }
 
     function onboardingTourNext() {
@@ -1762,7 +1800,6 @@ const App = (() => {
             $("video-title").textContent = data.title;
             $("video-duration").textContent = videoDuration > 0 ? formatDuration(videoDuration) : "Unknown";
             show("video-info");
-            document.dispatchEvent(new CustomEvent("app:url-validated"));
 
             // Step 2: Automatically download the full video
             $("download-status-text").textContent = "Downloading video...";
@@ -2205,7 +2242,11 @@ const App = (() => {
                 if (data.status === "downloaded") {
                     clearInterval(pollTimer);
                     pollTimer = null;
-                    $("download-status-text").textContent = "Downloaded! Loading preview...";
+                    // The server has already probed the file. Don't promise a
+                    // preview if the codec can't decode in this WebView build.
+                    $("download-status-text").textContent = data.preview_playable === false
+                        ? "Downloaded (preview not supported for this codec)..."
+                        : "Downloaded! Loading preview...";
 
                     finishDownload();
                     return;
@@ -2231,14 +2272,28 @@ const App = (() => {
                 $("video-duration").textContent = formatDuration(videoDuration);
             }
 
-            // Load video preview
-            loadVideoPreview();
-
             clearWorkflowErrors();
             hide("download-status");
             enableStep(2);
             enableStep(3);
             enableStep(4);
+
+            // The file downloaded and verified fine, but this WebView build can't
+            // decode its codec. Tell the truth instead of loading a preview that
+            // will error out, and unstick the tour (the clip is usable for export).
+            if (videoInfo && videoInfo.preview_playable === false) {
+                const vc = videoInfo.vcodec || "this codec";
+                showError(
+                    "step2-error",
+                    `Preview unavailable: the downloaded clip uses ${vc}, which this build can't play back in-app. ` +
+                    `Trimming and export still work — you just won't see a live preview.`
+                );
+                document.dispatchEvent(new CustomEvent("app:preview-loaded"));
+                return;
+            }
+
+            // Load video preview
+            loadVideoPreview();
 
         } catch (e) {
             showError("step1-error", "Failed to load video: " + e.message);
@@ -2404,12 +2459,22 @@ const App = (() => {
             4: "source not supported (404, MIME mismatch, or unsupported codec)",
         };
 
-        video.onerror = () => {
+        video.onerror = async () => {
             const err = video.error;
             const code = err?.code;
             const detail = MEDIA_ERROR_HINT[code] || `unknown (code=${code})`;
-            console.error("Video load error", { code, message: err?.message, src: targetUrl, networkState: video.networkState, readyState: video.readyState });
-            showError("step2-error", `Failed to load video preview: ${detail}.`);
+            // Probe what the server actually served so the error names the real cause
+            // (wrong container vs. 404 vs. a playable container the codec can't decode).
+            let served = "";
+            try {
+                const resp = await fetch(targetUrl, { method: "HEAD" });
+                served = ` [HTTP ${resp.status}, type=${resp.headers.get("content-type") || "?"}]`;
+            } catch (e) {
+                served = ` [probe failed: ${e.message}]`;
+            }
+            console.error("Video load error", { code, message: err?.message, src: targetUrl, served, networkState: video.networkState, readyState: video.readyState });
+            const msg = err?.message ? ` — ${err.message}` : "";
+            showError("step2-error", `Failed to load video preview: ${detail}.${served}${msg}`);
         };
 
         // Start loading
@@ -2434,6 +2499,9 @@ const App = (() => {
 
             // Load waveform
             if (jobId) loadWaveform(jobId);
+
+            // Tour: the source clip is now visibly loaded — safe to advance step 1.
+            document.dispatchEvent(new CustomEvent("app:preview-loaded"));
         };
 
         // Handle looping within trim region (only when loop toggle is active)

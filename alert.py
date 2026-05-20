@@ -40,6 +40,7 @@ def register_alert_routes(app):
         has_deno_runtime,
         parse_timestamp_to_seconds,
         probe_media_duration,
+        probe_media_file,
         download_separate_audio,
         get_output_dir,
     )
@@ -132,6 +133,26 @@ def register_alert_routes(app):
 
             filename = files[0].name
 
+            # yt-dlp exit 0 + a file on disk does NOT mean we got usable media.
+            # Probe the result so we report honestly instead of advancing the UI
+            # toward a preview that will fail to decode.
+            probe = probe_media_file(files[0])
+            if not probe["ok"]:
+                jobs[job_id] = {"status": "error", "error": f"Download could not be verified: {probe['error']}"}
+                return
+            if not probe["has_video"]:
+                jobs[job_id] = {"status": "error", "error": "Downloaded file has no video stream"}
+                return
+            if probe["duration"] <= 0:
+                jobs[job_id] = {"status": "error", "error": "Downloaded file has zero duration"}
+                return
+
+            codec_info = {
+                "vcodec": probe["vcodec"],
+                "acodec": probe["acodec"],
+                "preview_playable": probe["preview_playable"],
+            }
+
             # If using separate audio, download audio-only from second URL
             if use_separate_audio:
                 jobs[job_id] = {"status": "downloading", "progress": 50, "stage": "Downloading audio clip..."}
@@ -150,11 +171,12 @@ def register_alert_routes(app):
                     "status": "downloaded",
                     "filename": filename,
                     "audio_filename": Path(separate_audio_file).name,
-                    "use_separate_audio": True
+                    "use_separate_audio": True,
+                    **codec_info,
                 }
                 return
 
-            jobs[job_id] = {"status": "downloaded", "filename": filename, "use_separate_audio": False}
+            jobs[job_id] = {"status": "downloaded", "filename": filename, "use_separate_audio": False, **codec_info}
             print(f"Download job {job_id} complete: {filename}")
 
         except subprocess.TimeoutExpired:
@@ -733,11 +755,28 @@ def register_alert_routes(app):
 
             duration = float(info.get("format", {}).get("duration", 0))
 
+            from app import PREVIEW_PLAYABLE_VCODECS, ensure_preview_proxy
+            vcodec = (video_stream.get("codec_name") or "").lower()
+            audio_stream = next(
+                (s for s in info.get("streams", []) if s.get("codec_type") == "audio"), None
+            )
+            acodec = (audio_stream.get("codec_name") or "").lower() if audio_stream else ""
+
+            # The WebEngine can't decode H.264/AAC. For such clips, transcode a
+            # WebM proxy now (alert clips are short, so it's quick) so the live
+            # preview works; serve_clip will hand it back instead of the original.
+            preview_playable = vcodec in PREVIEW_PLAYABLE_VCODECS
+            if not preview_playable and ensure_preview_proxy(input_file) is not None:
+                preview_playable = True
+
             return jsonify({
                 "width": width,
                 "height": height,
                 "fps": round(fps, 2),
                 "duration": round(duration, 2),
+                "vcodec": vcodec,
+                "acodec": acodec,
+                "preview_playable": preview_playable,
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -1016,7 +1055,11 @@ def register_alert_routes(app):
         files = list(job_dir.glob("clip.*"))
         if not files:
             return jsonify({"error": "File not found"}), 404
-        clip_path = files[0]
+        # If a WebM preview proxy was built for an unplayable codec (e.g. H.264),
+        # serve that so the in-app <video> can decode it. Trim/export still use
+        # the original clip.* directly.
+        proxy = job_dir / "preview.webm"
+        clip_path = proxy if proxy.exists() else files[0]
         mimetype, _ = mimetypes.guess_type(str(clip_path))
         return send_file(str(clip_path), mimetype=mimetype or "application/octet-stream")
 
