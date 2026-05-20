@@ -11,6 +11,7 @@ direct ffmpeg export are new here.
 
 Run: python native_app.py
 """
+import os
 import sys
 import uuid
 import subprocess
@@ -344,7 +345,7 @@ class DownloadWorker(QThread):
             self.failed.emit(str(e))
 
 
-def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade):
+def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade, end_buffer=0):
     """Construct the ffmpeg export command. Pure function (unit-testable)."""
     x, y, w, h = crop
     start, end = trim
@@ -361,6 +362,12 @@ def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade):
             af.append(f"afade=t=in:st=0:d={fl}")
         if fade in ("end", "both") and dur > fl:
             af.append(f"afade=t=out:st={dur - fl:.3f}:d={fl}")
+    if end_buffer and end_buffer > 0:
+        # Freeze the last frame for the buffer (alerts need fade-out room). Video
+        # only: audio ends naturally (silence over the freeze, which is what you
+        # want). NB: pairing tpad's cloned video with apad deadlocks ffmpeg, so
+        # we deliberately do NOT pad the audio.
+        vf += f",tpad=stop_mode=clone:stop_duration={end_buffer}"
     cmd = [FFMPEG, "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(src),
            "-vf", vf]
     if af:
@@ -376,15 +383,15 @@ class ExportWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade):
+    def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade, end_buffer=0):
         super().__init__()
-        self.args = (src, out, crop, trim, out_size, crf, normalize, fade)
+        self.args = (src, out, crop, trim, out_size, crf, normalize, fade, end_buffer)
 
     def run(self):
-        src, out, crop, trim, out_size, crf, normalize, fade = self.args
-        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade)
+        src, out, crop, trim, out_size, crf, normalize, fade, end_buffer = self.args
+        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade, end_buffer)
         cmd += ["-progress", "pipe:1", "-nostats"]
-        total = max(0.001, trim[1] - trim[0])
+        total = max(0.001, trim[1] - trim[0]) + (end_buffer or 0)
         try:
             # Merge stderr into stdout so a single read loop drains everything —
             # avoids the classic deadlock of an undrained stderr pipe filling up.
@@ -414,6 +421,31 @@ class ExportWorker(QThread):
             self.finished_ok.emit(str(out))
         except Exception as e:
             self.failed.emit(str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Welcome overlay (first run)
+# ──────────────────────────────────────────────────────────────────────
+class WelcomeOverlay(QWidget):
+    def __init__(self, parent, on_start):
+        super().__init__(parent)
+        self.setObjectName("welcomeBackdrop")
+        self._on_start = on_start
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
+        card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(460)
+        c = QVBoxLayout(card); c.setContentsMargins(36, 40, 36, 40); c.setSpacing(16)
+        badge = QLabel("!"); badge.setObjectName("welcomeBadge")
+        badge.setAlignment(Qt.AlignCenter); badge.setFixedSize(84, 84)
+        title = QLabel("Alert! Alert!"); title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
+        sub = QLabel("Turn any clip into a stream alert — trim, crop, export. Fast.")
+        sub.setObjectName("welcomeSub"); sub.setWordWrap(True); sub.setAlignment(Qt.AlignCenter)
+        steps = QLabel("①  Load a URL or open a file\n②  Crop & set in/out on the video\n③  Export your alert")
+        steps.setObjectName("welcomeSteps")
+        btn = QPushButton("Get Started"); btn.setObjectName("primary"); btn.setFixedWidth(190)
+        btn.clicked.connect(lambda: self._on_start and self._on_start())
+        for w in (badge, title, sub, steps, btn):
+            c.addWidget(w, alignment=Qt.AlignCenter)
+        outer.addWidget(card)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -490,6 +522,8 @@ class MainWindow(QMainWindow):
         self.preset = self._combo(p, "Quality (CRF)", ["18", "23", "28"], 1,
                                   {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get)
         self.fade = self._combo(p, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize)
+        self.buffer = self._combo(p, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
+                                  lambda v: "None" if v == "0" else f"{v}s freeze")
         self.normalize = QCheckBox("Normalize audio"); self.normalize.setChecked(True)
         p.addWidget(self.normalize)
 
@@ -521,6 +555,52 @@ class MainWindow(QMainWindow):
         self.player.durationChanged.connect(self.on_player_duration)
         self.player.playbackStateChanged.connect(
             lambda s: self.play_btn.setText("⏸" if s == QMediaPlayer.PlaybackState.PlayingState else "▶"))
+
+        self._build_menu()
+        self._last_output = None
+        self.welcome = WelcomeOverlay(central, self._dismiss_welcome)
+        self.welcome.hide()
+        QTimer.singleShot(0, self._maybe_welcome)
+
+    # --- menu / welcome ---
+    def _build_menu(self):
+        m = self.menuBar().addMenu("&App")
+        a_open = QAction("Open Output Folder", self); a_open.triggered.connect(self._open_output)
+        a_welcome = QAction("Replay Welcome", self); a_welcome.triggered.connect(self._show_welcome)
+        a_about = QAction("About", self); a_about.triggered.connect(self._about)
+        a_quit = QAction("Quit", self); a_quit.triggered.connect(self.close)
+        for a in (a_open, a_welcome, a_about):
+            m.addAction(a)
+        m.addSeparator(); m.addAction(a_quit)
+
+    def _open_output(self):
+        d = get_output_dir(); d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d)) if hasattr(os, "startfile") else None
+
+    def _about(self):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.about(self, "About Alert! Alert!",
+                          "<b>Alert! Alert!</b><br>Native build — trim, crop & export "
+                          "stream alerts fast.<br>Built with PySide6 + ffmpeg.")
+
+    def _maybe_welcome(self):
+        from PySide6.QtCore import QSettings
+        if not QSettings("deutschmark", "AlertAlert").value("welcomed", False, type=bool):
+            self._show_welcome()
+
+    def _show_welcome(self):
+        self.welcome.setGeometry(self.centralWidget().rect())
+        self.welcome.show(); self.welcome.raise_()
+
+    def _dismiss_welcome(self):
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
+        self.welcome.hide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, "welcome", None) and self.welcome.isVisible():
+            self.welcome.setGeometry(self.centralWidget().rect())
 
     # --- ui helpers ---
     def _h(self, text):
@@ -642,7 +722,8 @@ class MainWindow(QMainWindow):
         self.export_btn.setEnabled(False); self.bar.setValue(0); self.bar.show()
         self.status.setText("Exporting…")
         self.ex = ExportWorker(self.clip_path, str(out), crop, trim, out_size, crf,
-                               self.normalize.isChecked(), self.fade.currentData())
+                               self.normalize.isChecked(), self.fade.currentData(),
+                               int(self.buffer.currentData()))
         self.ex.progress.connect(self.bar.setValue)
         self.ex.finished_ok.connect(self._exported)
         self.ex.failed.connect(self._export_failed)
@@ -685,6 +766,16 @@ QSlider::groove:horizontal {{ height: 4px; background: #2a2d36; border-radius: 2
 QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; height: 14px; margin: -6px 0; border-radius: 7px; }}
 QCheckBox {{ color: #c7ccd6; }}
 QCheckBox::indicator:checked {{ background: {ACCENT}; border-radius: 3px; }}
+QMenuBar {{ background: #1b1d24; }}
+QMenuBar::item:selected {{ background: {ACCENT}; color: #14151a; }}
+QMenu {{ background: #1b1d24; border: 1px solid #2a2d36; }}
+QMenu::item:selected {{ background: {ACCENT}; color: #14151a; }}
+#welcomeBackdrop {{ background: rgba(10,11,14,0.88); }}
+#welcomeCard {{ background: #1b1d24; border: 1px solid #2f333d; border-radius: 16px; }}
+#welcomeBadge {{ background: {ACCENT}; color: #14151a; font-size: 46px; font-weight: 800; border-radius: 42px; }}
+#welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
+#welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
+#welcomeSteps {{ color: #9aa0ab; font-size: 14px; }}
 """
 
 
