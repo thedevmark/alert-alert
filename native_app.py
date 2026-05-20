@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer, QPoint, QRect
-from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath
+from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath, QRegion
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
@@ -299,7 +299,7 @@ class CropView(QGraphicsView):
 # ──────────────────────────────────────────────────────────────────────
 class DownloadWorker(QThread):
     progress = Signal(str)
-    finished_ok = Signal(str)
+    finished_ok = Signal(str, str)  # (path, title)
     failed = Signal(str)
 
     def __init__(self, url):
@@ -311,11 +311,13 @@ class DownloadWorker(QThread):
             job_dir = DOWNLOADS_DIR / uuid.uuid4().hex
             job_dir.mkdir(parents=True, exist_ok=True)
             template = str(job_dir / "clip.%(ext)s")
+            title_file = job_dir / "title.txt"
             youtube = is_youtube_url(self.url)
 
             def build_cmd(profile, use_sections):
                 cmd = [YTDLP, "--no-playlist", "--force-ipv4", "-f", profile["format"],
-                       "--retries", "5", "--fragment-retries", "5", "-o", template]
+                       "--retries", "5", "--fragment-retries", "5", "-o", template,
+                       "--print-to-file", "%(title)s", str(title_file)]  # capture real title
                 if profile.get("sort"):
                     cmd += ["-S", profile["sort"]]
                 cmd += profile.get("extra", [])
@@ -342,7 +344,12 @@ class DownloadWorker(QThread):
             probe = probe_media_file(files[0])
             if not probe["ok"] or not probe["has_video"]:
                 self.failed.emit(probe["error"] or "No video stream"); return
-            self.finished_ok.emit(str(files[0]))
+            title = ""
+            try:
+                title = title_file.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0]
+            except Exception:
+                pass
+            self.finished_ok.emit(str(files[0]), title)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -564,19 +571,6 @@ class DepsInstallWorker(QThread):
             self.failed.emit(str(e))
 
 
-class DepCheckWorker(QThread):
-    """Check ffmpeg/ffprobe/yt-dlp availability (read-only). Emits the full
-    results dict so the UI can report status even when everything is present."""
-    done = Signal(dict)
-
-    def run(self):
-        import app
-        try:
-            self.done.emit(app.run_deps_check(force=True))
-        except Exception:
-            self.done.emit({})
-
-
 class DepInstallWorker(QThread):
     """Download + install the requested tools (only after explicit user consent),
     reporting progress. Refreshes tool paths in BOTH app and this module."""
@@ -661,60 +655,6 @@ class WaveformBar(QWidget):
     def mousePressEvent(self, event):
         if self.width():
             self.seek_to.emit(max(0.0, min(1.0, event.position().x() / self.width())))
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Dependency consent overlay (shown only when ffmpeg/yt-dlp are missing)
-# ──────────────────────────────────────────────────────────────────────
-class DepsOverlay(QWidget):
-    """Consent-gated setup. We NEVER download third-party tools without the
-    user explicitly clicking — we just offer to fetch them from their official
-    sources and show progress."""
-    install = Signal()
-    skip = Signal()
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setObjectName("welcomeBackdrop")
-        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
-        card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(540)
-        c = QVBoxLayout(card); c.setContentsMargins(36, 30, 36, 30); c.setSpacing(14)
-        title = QLabel("One-time setup"); title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
-        self.body = QLabel(); self.body.setObjectName("welcomeSub"); self.body.setWordWrap(True); self.body.setAlignment(Qt.AlignCenter)
-        self.sources = QLabel("These are third-party tools, downloaded from their official sources under "
-                              "their own licenses:\nFFmpeg — gyan.dev/ffmpeg/builds   ·   yt-dlp — github.com/yt-dlp/yt-dlp")
-        self.sources.setObjectName("muted"); self.sources.setWordWrap(True); self.sources.setAlignment(Qt.AlignCenter)
-        self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
-        self.status = QLabel(""); self.status.setObjectName("muted"); self.status.setAlignment(Qt.AlignCenter)
-        btns = QHBoxLayout(); btns.setAlignment(Qt.AlignCenter)
-        self.install_btn = QPushButton("Download && Install"); self.install_btn.setObjectName("primary"); self.install_btn.setFixedWidth(230)
-        self.skip_btn = QPushButton("Skip for now")
-        self.install_btn.clicked.connect(self.install.emit)
-        self.skip_btn.clicked.connect(self.skip.emit)
-        btns.addWidget(self.install_btn); btns.addWidget(self.skip_btn)
-        for w in (title, self.body, self.sources, self.bar, self.status):
-            c.addWidget(w, alignment=Qt.AlignCenter)
-        c.addLayout(btns)
-        outer.addWidget(card)
-
-    def set_missing(self, missing):
-        pretty = []
-        if "ffmpeg" in missing or "ffprobe" in missing:
-            pretty.append("FFmpeg")
-        if "yt-dlp" in missing:
-            pretty.append("yt-dlp")
-        joined = " and ".join(pretty) if pretty else "some tools"
-        it = "them" if len(pretty) > 1 else "it"
-        self.body.setText(f"Alert! Alert! needs <b>{joined}</b> to download and export clips. "
-                          f"Click below and we'll download {it} for you — nothing is downloaded until you do.")
-
-    def set_progress(self, pct, label):
-        self.bar.show(); self.bar.setValue(pct); self.status.setText(label)
-        self.install_btn.setEnabled(False); self.skip_btn.setEnabled(False)
-
-    def set_failed(self, msg):
-        self.status.setText(msg + "  — you can retry.")
-        self.install_btn.setEnabled(True); self.skip_btn.setEnabled(True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -906,6 +846,10 @@ class TourOverlay(QWidget):
             else:
                 cy = max(14, self._hole.top() - ch - 14)
         self.card.move(cx, cy)
+        # Punch a real hole so the spotlighted control stays clickable (clicks in
+        # the hole fall through to the widget below).
+        full = QRegion(self.rect())
+        self.setMask(full.subtracted(QRegion(self._hole)) if not self._hole.isNull() else full)
         self.update()
 
     def _next(self):
@@ -1013,6 +957,7 @@ class MainWindow(QMainWindow):
         left.addWidget(self.view, 1)
 
         self.player = QMediaPlayer()
+        self.player.setLoops(QMediaPlayer.Loops.Infinite)  # loop preview, no black freeze at end
         self.audio = QAudioOutput(); self.audio.setVolume(0.15)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.view.video_item)
@@ -1059,29 +1004,37 @@ class MainWindow(QMainWindow):
         tg.addWidget(self.trim_lbl)
         p.addWidget(self.trim_group)
 
-        p.addWidget(self._h("Overrides — optional"))
+        p.addWidget(self._h("Swap audio / visuals — optional"))
+        hint = QLabel("Use a different sound, or replace the video with a still image.")
+        hint.setObjectName("muted"); hint.setWordWrap(True)
+        p.addWidget(hint)
         ov = QGridLayout(); ov.setSpacing(8)
-        self.aud_file_btn = QPushButton("Audio file…")
-        self.aud_url_btn = QPushButton("Audio URL…")
-        self.img_btn = QPushButton("Image…")
-        self.clear_ovr_btn = QPushButton("Clear")
+        self.aud_file_btn = QPushButton("Audio: file")
+        self.aud_url_btn = QPushButton("Audio: URL")
+        self.img_btn = QPushButton("Visual: image")
+        self.clear_ovr_btn = QPushButton("Reset to clip")
         ov.addWidget(self.aud_file_btn, 0, 0); ov.addWidget(self.aud_url_btn, 0, 1)
         ov.addWidget(self.img_btn, 1, 0); ov.addWidget(self.clear_ovr_btn, 1, 1)
         p.addLayout(ov)
-        self.ovr_lbl = QLabel("Audio: clip · Visual: video"); self.ovr_lbl.setObjectName("muted")
+        self.ovr_lbl = QLabel("Using clip's own audio + video"); self.ovr_lbl.setObjectName("muted")
         self.ovr_lbl.setWordWrap(True)
         p.addWidget(self.ovr_lbl)
 
         p.addWidget(self._h("Export", 3))
         self.export_group = QWidget()
         eg = QVBoxLayout(self.export_group); eg.setContentsMargins(0, 0, 0, 0); eg.setSpacing(10)
-        self.res = self._combo(eg, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}")
+        self.res = self._combo(eg, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}",
+                               tip="Output size of the square alert clip, in pixels.")
         self.preset = self._combo(eg, "Quality (CRF)", ["18", "23", "28"], 1,
-                                  {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get)
-        self.fade = self._combo(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize)
+                                  {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get,
+                                  tip="Lower CRF = higher quality + bigger file. 23 is a good balance; 28 is smallest.")
+        self.fade = self._combo(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize,
+                                tip="Fade the audio in at the start, out at the end, both, or off.")
         self.buffer = self._combo(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
-                                  lambda v: "None" if v == "0" else f"{v}s freeze")
+                                  lambda v: "None" if v == "0" else f"{v}s freeze",
+                                  tip="Hold the last frame for a few seconds so the alert has room to fade out on stream.")
         self.normalize = QCheckBox("Normalize audio"); self.normalize.setChecked(True)
+        self.normalize.setToolTip("Even out loudness to a consistent target (~-16 LUFS) so alerts aren't wildly louder than each other.")
         eg.addWidget(self.normalize)
         self.export_btn = QPushButton("Export current"); self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
@@ -1140,6 +1093,7 @@ class MainWindow(QMainWindow):
              "to render the whole queue at once."),
         ], on_finish=self._tour_done)
         self.tour.hide()
+        self._set_steps_enabled(False)  # nothing to edit until a clip is loaded
         QTimer.singleShot(0, self._check_dependencies)
 
     # --- menu / welcome ---
@@ -1303,9 +1257,14 @@ class MainWindow(QMainWindow):
         s.valueChanged.connect(lambda x: v.setText(f"{x}{suffix}"))
         row.addWidget(s, 1); row.addWidget(v); layout.addLayout(row); return s
 
-    def _combo(self, layout, label, items, default, fmt):
+    def _combo(self, layout, label, items, default, fmt, tip=""):
         box = QWidget(); v = QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(5)
-        lab = QLabel(label); lab.setObjectName("fieldlabel"); v.addWidget(lab)
+        head = QHBoxLayout(); head.setSpacing(6)
+        lab = QLabel(label); lab.setObjectName("fieldlabel"); head.addWidget(lab)
+        if tip:
+            q = QLabel("ⓘ"); q.setObjectName("infotip"); q.setToolTip(tip); head.addWidget(q)
+        head.addStretch(1)
+        v.addLayout(head)
         c = QComboBox()
         for it in items:
             c.addItem(fmt(it) if fmt else it, it)
@@ -1334,17 +1293,26 @@ class MainWindow(QMainWindow):
     def _dl_failed(self, msg):
         self.load_btn.setEnabled(True); self.status.setText(f"Failed: {msg}")
 
-    def _add_source(self, path):
+    @staticmethod
+    def _short(name, n=26):
+        return name if len(name) <= n else name[: n - 1] + "…"
+
+    def _add_source(self, path, title=""):
         self.load_btn.setEnabled(True)
         self.url_input.clear()
         w, h, dur = probe_dimensions(path)
         if not w:
             self.status.setText("Could not read video."); return
         item = QueueItem(path, w, h, dur)
+        name = (title or "").strip() or Path(path).name
+        if name.lower().startswith("clip.") or not name:   # generic download filename
+            name = f"Clip {len(self.queue) + 1}"
+        item.name = name
         self.queue.append(item)
-        self.queue_list.addItem(QListWidgetItem(item.name))
+        li = QListWidgetItem(self._short(name)); li.setToolTip(name)  # hover to see full name
+        self.queue_list.addItem(li)
         self.queue_list.setCurrentRow(len(self.queue) - 1)  # -> _select_row loads it
-        self.status.setText(f"Added {item.name}  ·  {len(self.queue)} in queue")
+        self.status.setText(f"Added {self._short(name)}  ·  {len(self.queue)} in queue")
 
     # --- queue: select / save / restore ---
     def _select_row(self, row):
@@ -1363,6 +1331,12 @@ class MainWindow(QMainWindow):
         it.trim_in, it.trim_out = self.trim_in, self.trim_out
         it.audio_src, it.image_src = self.audio_src, self.image_src
 
+    def _set_steps_enabled(self, on):
+        for w in (self.crop_group, self.trim_group, self.export_group,
+                  self.aud_file_btn, self.aud_url_btn, self.img_btn, self.clear_ovr_btn):
+            w.setEnabled(on)
+        self.export_btn.setEnabled(on)
+
     def _load_item(self, it):
         self.clip_path = it.path
         self.duration = it.duration
@@ -1378,9 +1352,10 @@ class MainWindow(QMainWindow):
             self.view.viewport().update()
         self.player.setSource(QUrl.fromLocalFile(it.path))
         self.player.play()
-        self.seek.setEnabled(True); self.play_btn.setEnabled(True); self.export_btn.setEnabled(True)
+        self.seek.setEnabled(True); self.play_btn.setEnabled(True)
+        self._set_steps_enabled(True)   # steps come alive once a clip is loaded
         self._update_trim_lbl(); self._update_ovr_lbl()
-        self.status.setText(f"{it.name} · {it.w}×{it.h}")
+        self.status.setText(f"{self._short(it.name)} · {it.w}×{it.h}")
         self.wave.set_image("")
         self.wf = WaveformWorker(it.path, Path(it.path).parent / "wave.png")
         self.wf.done.connect(self.wave.set_image)
@@ -1398,7 +1373,9 @@ class MainWindow(QMainWindow):
         else:
             self.clip_path = None
             self.player.setSource(QUrl())
-            self.status.setText("Queue empty.")
+            self.seek.setEnabled(False); self.play_btn.setEnabled(False)
+            self._set_steps_enabled(False)
+            self.status.setText("Queue empty — add a clip.")
 
     # --- playback ---
     def toggle_play(self):
@@ -1632,6 +1609,8 @@ QLabel {{ background: transparent; }}
 #preview {{ background: #000; border: none; }}
 #section {{ color: #aeb4c0; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }}
 #fieldlabel {{ color: #9aa0ad; font-size: 12px; }}
+#infotip {{ color: #6b7280; font-size: 12px; }}
+QToolTip {{ background: #1a1d25; color: #e6e9ef; border: 1px solid #2c313c; padding: 6px 8px; border-radius: 6px; }}
 #muted {{ color: #868c98; font-size: 12px; }}
 #mono {{ font-family: Consolas, monospace; color: #c7ccd6; }}
 #stepbadge {{ background: {ACCENT}; color: #0f1014; font-weight: 800; font-size: 12px; border-radius: 11px; }}
