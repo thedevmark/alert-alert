@@ -37,6 +37,7 @@ from app import (
 from ytdlp import build_ytdlp_profiles, run_ytdlp_with_retries
 
 ACCENT = "#5E8FCB"
+SAMPLE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # sample clip to try without your own
 
 # label -> aspect ratio (w/h); None = free/original
 RATIOS = {
@@ -954,7 +955,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         # far-left: the batch queue
-        qpanel = QFrame(); qpanel.setObjectName("qpanel"); qpanel.setFixedWidth(210)
+        self.qpanel = qpanel = QFrame(); qpanel.setObjectName("qpanel"); qpanel.setFixedWidth(210)
         qv = QVBoxLayout(qpanel); qv.setContentsMargins(12, 12, 12, 12); qv.setSpacing(10)
         qhdr = QLabel("QUEUE"); qhdr.setObjectName("section")
         qv.addWidget(qhdr)
@@ -977,10 +978,16 @@ class MainWindow(QMainWindow):
         left.setContentsMargins(12, 12, 12, 12)
         self.src_row = QWidget()
         src = QHBoxLayout(self.src_row); src.setContentsMargins(0, 0, 0, 0); src.setSpacing(8)
-        self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL to add…")
+        self.qtoggle_btn = QPushButton("☰"); self.qtoggle_btn.setFixedWidth(38)
+        self.qtoggle_btn.setToolTip("Show / hide the queue")
+        self.qtoggle_btn.clicked.connect(self._toggle_queue)
+        self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL (or drag a file in) to add…")
         self.load_btn = QPushButton("Add URL")
         self.file_btn = QPushButton("Add file")
-        src.addWidget(self.url_input); src.addWidget(self.load_btn); src.addWidget(self.file_btn)
+        self.sample_btn = QPushButton("Try sample"); self.sample_btn.setToolTip("Load a sample clip so you can try it without your own")
+        self.sample_btn.clicked.connect(self.on_sample)
+        src.addWidget(self.qtoggle_btn); src.addWidget(self.url_input)
+        src.addWidget(self.load_btn); src.addWidget(self.file_btn); src.addWidget(self.sample_btn)
         left.addWidget(self.src_row)
 
         self.view = CropView()
@@ -1072,7 +1079,7 @@ class MainWindow(QMainWindow):
         p.addWidget(self.export_group)
         self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
         p.addWidget(self.bar)
-        self.status = QLabel("Load a clip to begin."); self.status.setWordWrap(True); self.status.setObjectName("muted")
+        self.status = QLabel("Add a clip to get started."); self.status.setWordWrap(True); self.status.setObjectName("statusline")
         p.addWidget(self.status)
         p.addStretch(1)
         root.addWidget(panel)
@@ -1122,6 +1129,10 @@ class MainWindow(QMainWindow):
              "to render the whole queue at once."),
         ], on_finish=self._tour_done)
         self.tour.hide()
+        self.setAcceptDrops(True)
+        self.drop_hint = QLabel("Drop a video to add it to the queue", central)
+        self.drop_hint.setObjectName("drophint"); self.drop_hint.setAlignment(Qt.AlignCenter)
+        self.drop_hint.hide()
         self._set_steps_enabled(False)  # nothing to edit until a clip is loaded
         QTimer.singleShot(0, self._check_dependencies)
 
@@ -1265,6 +1276,39 @@ class MainWindow(QMainWindow):
             self.deps.setGeometry(self.centralWidget().rect())
         if getattr(self, "tour", None) and self.tour.isVisible():
             self.tour.relayout()
+        if getattr(self, "drop_hint", None):
+            self.drop_hint.setGeometry(self.centralWidget().rect())
+
+    # --- queue toggle / sample / drag-and-drop ---
+    def _toggle_queue(self):
+        self.qpanel.setVisible(not self.qpanel.isVisible())
+
+    def on_sample(self):
+        self.url_input.setText(SAMPLE_URL)
+        self.on_load_url()
+
+    def dragEnterEvent(self, event):
+        md = event.mimeData()
+        if md.hasUrls() or md.hasText():
+            event.acceptProposedAction()
+            self.drop_hint.setGeometry(self.centralWidget().rect())
+            self.drop_hint.show(); self.drop_hint.raise_()
+
+    def dragLeaveEvent(self, event):
+        self.drop_hint.hide()
+
+    def dropEvent(self, event):
+        self.drop_hint.hide()
+        md = event.mimeData()
+        added = False
+        for url in md.urls():
+            if url.isLocalFile():
+                self._add_source(url.toLocalFile()); added = True
+            elif url.toString().startswith(("http://", "https://")):
+                self.url_input.setText(url.toString()); self.on_load_url(); added = True
+        if not added and md.hasText() and md.text().strip().startswith(("http://", "https://")):
+            self.url_input.setText(md.text().strip()); self.on_load_url()
+        event.acceptProposedAction()
 
     # --- ui helpers ---
     def _h(self, text, num=None):
@@ -1301,11 +1345,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(box); return c
 
     # --- source loading ---
+    def _set_adding(self, busy):
+        self.load_btn.setText("Adding…" if busy else "Add URL")
+        for b in (self.load_btn, self.file_btn, self.sample_btn):
+            b.setEnabled(not busy)
+
     def on_load_url(self):
         url = self.url_input.text().strip()
         if not url:
             return
-        self.load_btn.setEnabled(False); self.status.setText("Starting download…")
+        self._set_adding(True); self.status.setText("Downloading…")
         self.dl = DownloadWorker(url)
         self.dl.progress.connect(self.status.setText)
         self.dl.finished_ok.connect(self._add_source)
@@ -1320,14 +1369,14 @@ class MainWindow(QMainWindow):
             self._add_source(path)
 
     def _dl_failed(self, msg):
-        self.load_btn.setEnabled(True); self.status.setText(f"Failed: {msg}")
+        self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
 
     @staticmethod
     def _short(name, n=26):
         return name if len(name) <= n else name[: n - 1] + "…"
 
     def _add_source(self, path, title=""):
-        self.load_btn.setEnabled(True)
+        self._set_adding(False)
         self.url_input.clear()
         w, h, dur = probe_dimensions(path)
         if not w:
@@ -1649,6 +1698,8 @@ QLabel {{ background: transparent; }}
 #section {{ color: #aeb4c0; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }}
 #fieldlabel {{ color: #9aa0ad; font-size: 12px; }}
 #infotip {{ color: #6b7280; font-size: 12px; }}
+#statusline {{ color: #c7ccd6; font-size: 12px; }}
+#drophint {{ background: rgba(13,14,18,0.92); border: 3px dashed {ACCENT}; border-radius: 16px; color: {ACCENT}; font-size: 22px; font-weight: 700; }}
 QToolTip {{ background: #1a1d25; color: #e6e9ef; border: 1px solid #2c313c; padding: 6px 8px; border-radius: 6px; }}
 #muted {{ color: #868c98; font-size: 12px; }}
 #mono {{ font-family: Consolas, monospace; color: #c7ccd6; }}
@@ -1659,7 +1710,9 @@ QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{ background: #1a1d25; border: 1px solid #2a2f3a; selection-background-color: {ACCENT}; selection-color: #0f1014; outline: none; }}
 QPushButton {{ background: #232732; border: 1px solid #353b48; border-radius: 8px; padding: 9px 14px; min-height: 18px; color: #dfe3ea; }}
 QPushButton:hover {{ border-color: {ACCENT}; background: #2a2f3c; }}
+QPushButton:pressed {{ background: #1b1f27; }}
 QPushButton:disabled {{ color: #5a5f6b; background: #1a1d24; border-color: #262a32; }}
+QPushButton#primary:pressed {{ background: #4f7fb8; }}
 QPushButton#chip {{ padding: 8px 6px; min-height: 14px; }}
 QPushButton#chip:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
 QPushButton#primary {{ background: {ACCENT}; color: #0f1014; font-weight: 700; border: none; padding: 12px; font-size: 14px; }}
