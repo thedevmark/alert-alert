@@ -31,6 +31,7 @@ from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from app import (
     DOWNLOADS_DIR, YTDLP, FFMPEG, FFPROBE, FFMPEG_DIR, run_subprocess,
     probe_media_file, is_youtube_url, has_deno_runtime, get_env, get_output_dir,
+    download_separate_audio,
 )
 from ytdlp import build_ytdlp_profiles, run_ytdlp_with_retries
 
@@ -345,36 +346,63 @@ class DownloadWorker(QThread):
             self.failed.emit(str(e))
 
 
-def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade, end_buffer=0):
-    """Construct the ffmpeg export command. Pure function (unit-testable)."""
+def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
+                     end_buffer=0, audio_src=None, image_src=None):
+    """Construct the ffmpeg export command. Pure function (unit-testable).
+
+    audio_src: replace the clip's audio with this file (separate-audio override).
+    image_src: use this still image as the visual (cover-scaled), keeping audio
+               from the clip (static-image override). Crop is ignored for images.
+    """
     x, y, w, h = crop
     start, end = trim
-    vf = (f"crop={w}:{h}:{x}:{y},"
-          f"scale={out_size}:{out_size}:force_original_aspect_ratio=decrease,"
-          f"pad={out_size}:{out_size}:(ow-iw)/2:(oh-ih)/2:black,setsar=1")
+    trim_len = max(0.05, end - start)
+    total = trim_len + (end_buffer or 0)
+    cmd = [FFMPEG, "-y"]
+
+    # --- video input (input 0) ---
+    if image_src:
+        cmd += ["-loop", "1", "-t", f"{total:.3f}", "-i", str(image_src)]
+        vf = (f"scale={out_size}:{out_size}:force_original_aspect_ratio=increase,"
+              f"crop={out_size}:{out_size},setsar=1")
+    else:
+        cmd += ["-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(src)]
+        vf = (f"crop={w}:{h}:{x}:{y},"
+              f"scale={out_size}:{out_size}:force_original_aspect_ratio=decrease,"
+              f"pad={out_size}:{out_size}:(ow-iw)/2:(oh-ih)/2:black,setsar=1")
+        if end_buffer and end_buffer > 0:
+            # Freeze last frame (audio ends naturally — tpad+apad deadlocks ffmpeg).
+            vf += f",tpad=stop_mode=clone:stop_duration={end_buffer}"
+
+    # --- audio input ---
+    if audio_src:
+        cmd += ["-t", f"{trim_len:.3f}", "-i", str(audio_src)]
+        a_idx = 1
+    elif image_src:
+        cmd += ["-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(src)]
+        a_idx = 1
+    else:
+        a_idx = 0
+
     af = []
     if normalize:
         af.append("loudnorm=I=-16:TP=-1.5:LRA=11")
     if fade and fade != "none":
-        dur = max(0.0, end - start)
         fl = 0.35
         if fade in ("start", "both"):
             af.append(f"afade=t=in:st=0:d={fl}")
-        if fade in ("end", "both") and dur > fl:
-            af.append(f"afade=t=out:st={dur - fl:.3f}:d={fl}")
-    if end_buffer and end_buffer > 0:
-        # Freeze the last frame for the buffer (alerts need fade-out room). Video
-        # only: audio ends naturally (silence over the freeze, which is what you
-        # want). NB: pairing tpad's cloned video with apad deadlocks ffmpeg, so
-        # we deliberately do NOT pad the audio.
-        vf += f",tpad=stop_mode=clone:stop_duration={end_buffer}"
-    cmd = [FFMPEG, "-y", "-ss", f"{start:.3f}", "-to", f"{end:.3f}", "-i", str(src),
-           "-vf", vf]
+        if fade in ("end", "both") and trim_len > fl:
+            af.append(f"afade=t=out:st={trim_len - fl:.3f}:d={fl}")
+
+    cmd += ["-map", "0:v:0", "-map", f"{a_idx}:a:0?", "-vf", vf]
     if af:
         cmd += ["-af", ",".join(af)]
     cmd += ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-            "-movflags", "+faststart", str(out)]
+            "-movflags", "+faststart"]
+    if image_src:
+        cmd += ["-t", f"{total:.3f}"]  # bound the looped image
+    cmd += [str(out)]
     return cmd
 
 
@@ -383,13 +411,17 @@ class ExportWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade, end_buffer=0):
+    def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade,
+                 end_buffer=0, audio_src=None, image_src=None):
         super().__init__()
-        self.args = (src, out, crop, trim, out_size, crf, normalize, fade, end_buffer)
+        self.args = (src, out, crop, trim, out_size, crf, normalize, fade,
+                     end_buffer, audio_src, image_src)
 
     def run(self):
-        src, out, crop, trim, out_size, crf, normalize, fade, end_buffer = self.args
-        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade, end_buffer)
+        (src, out, crop, trim, out_size, crf, normalize, fade,
+         end_buffer, audio_src, image_src) = self.args
+        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
+                               end_buffer, audio_src, image_src)
         cmd += ["-progress", "pipe:1", "-nostats"]
         total = max(0.001, trim[1] - trim[0]) + (end_buffer or 0)
         try:
@@ -440,6 +472,28 @@ class WaveformWorker(QThread):
                 self.done.emit(str(self.out))
         except Exception:
             pass
+
+
+class AudioWorker(QThread):
+    """Download a separate audio source from a URL (reuses the existing helper)."""
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            job_dir = DOWNLOADS_DIR / ("aud_" + uuid.uuid4().hex)
+            job_dir.mkdir(parents=True, exist_ok=True)
+            path = download_separate_audio(job_dir, self.url, 0, 0)
+            if path and Path(path).exists():
+                self.done.emit(str(path))
+            else:
+                self.failed.emit("No audio downloaded")
+        except Exception as e:
+            self.failed.emit(str(e))
 
 
 class WaveformBar(QWidget):
@@ -523,6 +577,9 @@ class MainWindow(QMainWindow):
         self.duration = 0.0
         self.dl = None
         self.ex = None
+        self.aud_worker = None
+        self.audio_src = None
+        self.image_src = None
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -583,6 +640,19 @@ class MainWindow(QMainWindow):
         self.trim_lbl = QLabel("In 0:00 · Out 0:00 · 0:00"); self.trim_lbl.setObjectName("mono")
         p.addWidget(self.trim_lbl)
 
+        p.addWidget(self._h("Overrides (optional)"))
+        ov = QGridLayout()
+        self.aud_file_btn = QPushButton("Audio file…")
+        self.aud_url_btn = QPushButton("Audio URL…")
+        self.img_btn = QPushButton("Image…")
+        self.clear_ovr_btn = QPushButton("Clear")
+        ov.addWidget(self.aud_file_btn, 0, 0); ov.addWidget(self.aud_url_btn, 0, 1)
+        ov.addWidget(self.img_btn, 1, 0); ov.addWidget(self.clear_ovr_btn, 1, 1)
+        p.addLayout(ov)
+        self.ovr_lbl = QLabel("Audio: clip · Visual: video"); self.ovr_lbl.setObjectName("muted")
+        self.ovr_lbl.setWordWrap(True)
+        p.addWidget(self.ovr_lbl)
+
         p.addWidget(self._h("Export"))
         self.res = self._combo(p, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}")
         self.preset = self._combo(p, "Quality (CRF)", ["18", "23", "28"], 1,
@@ -616,6 +686,10 @@ class MainWindow(QMainWindow):
         self.set_in_btn.clicked.connect(self.set_in)
         self.set_out_btn.clicked.connect(self.set_out)
         self.zoom.valueChanged.connect(lambda _v: self.set_ratio(self._current_ratio_name()))
+        self.aud_file_btn.clicked.connect(self.on_audio_file)
+        self.aud_url_btn.clicked.connect(self.on_audio_url)
+        self.img_btn.clicked.connect(self.on_image_file)
+        self.clear_ovr_btn.clicked.connect(self.on_clear_overrides)
         self.export_btn.clicked.connect(self.on_export)
         self.player.positionChanged.connect(self.on_position)
         self.player.durationChanged.connect(self.on_player_duration)
@@ -803,6 +877,44 @@ class MainWindow(QMainWindow):
         if self.duration:
             self.wave.set_region(self.trim_in / self.duration, self.trim_out / self.duration)
 
+    # --- overrides ---
+    def _update_ovr_lbl(self):
+        a = Path(self.audio_src).name if self.audio_src else "clip"
+        v = Path(self.image_src).name if self.image_src else "video"
+        self.ovr_lbl.setText(f"Audio: {a} · Visual: {v}")
+
+    def on_audio_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose audio", str(Path.home()),
+            "Audio/Video (*.mp3 *.wav *.aac *.m4a *.flac *.ogg *.opus *.mp4 *.mov *.mkv);;All files (*.*)")
+        if path:
+            self.audio_src = path; self._update_ovr_lbl()
+
+    def on_audio_url(self):
+        from PySide6.QtWidgets import QInputDialog
+        url, ok = QInputDialog.getText(self, "Audio URL", "Paste an audio/video URL:")
+        if ok and url.strip():
+            self.status.setText("Downloading audio…")
+            self.aud_worker = AudioWorker(url.strip())
+            self.aud_worker.done.connect(self._audio_ready)
+            self.aud_worker.failed.connect(lambda m: self.status.setText(f"Audio failed: {m}"))
+            self.aud_worker.start()
+
+    def _audio_ready(self, path):
+        self.audio_src = path; self._update_ovr_lbl()
+        self.status.setText("Separate audio ready.")
+
+    def on_image_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose image", str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All files (*.*)")
+        if path:
+            self.image_src = path; self._update_ovr_lbl()
+            self.status.setText("Static image will be used as the visual on export.")
+
+    def on_clear_overrides(self):
+        self.audio_src = None; self.image_src = None; self._update_ovr_lbl()
+
     # --- export ---
     def on_export(self):
         if not self.clip_path:
@@ -817,7 +929,7 @@ class MainWindow(QMainWindow):
         self.status.setText("Exporting…")
         self.ex = ExportWorker(self.clip_path, str(out), crop, trim, out_size, crf,
                                self.normalize.isChecked(), self.fade.currentData(),
-                               int(self.buffer.currentData()))
+                               int(self.buffer.currentData()), self.audio_src, self.image_src)
         self.ex.progress.connect(self.bar.setValue)
         self.ex.finished_ok.connect(self._exported)
         self.ex.failed.connect(self._export_failed)
