@@ -13,6 +13,14 @@ Alert! Alert! is a small native desktop app for streamers: pull in a clip from a
 
 ---
 
+## Supported platforms
+
+<p align="center">
+  <img src="docs/platforms.png" alt="Sources: local files, YouTube, Instagram, TikTok, Facebook — more coming soon" width="100%">
+</p>
+
+---
+
 ## What it does
 
 - **Load** from a video URL (via yt-dlp) or a local file.
