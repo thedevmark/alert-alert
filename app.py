@@ -521,16 +521,33 @@ def _build_storage_payload():
     }
 
 
-def _download_file(url, dest_path, timeout=180):
+def _download_file(url, dest_path, timeout=180, progress_cb=None):
+    """Download url to dest_path.
+
+    progress_cb(downloaded_bytes, total_bytes) is called as bytes arrive;
+    total_bytes is 0 when the server doesn't report Content-Length.
+    """
     req = Request(url, headers={"User-Agent": "alert-alert/1.0"})
     with urlopen(req, timeout=timeout) as response, open(dest_path, "wb") as out_file:
-        shutil.copyfileobj(response, out_file)
+        if progress_cb is None:
+            shutil.copyfileobj(response, out_file)
+            return
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        progress_cb(0, total)
+        while True:
+            chunk = response.read(65536)
+            if not chunk:
+                break
+            out_file.write(chunk)
+            downloaded += len(chunk)
+            progress_cb(downloaded, total)
 
 
-def _install_ffmpeg_windows():
+def _install_ffmpeg_windows(progress_cb=None):
     """Download and extract ffmpeg/ffprobe into runtime bin."""
     archive_path = RUNTIME_DIR / "ffmpeg-release-essentials.zip"
-    _download_file(FFMPEG_WINDOWS_URL, archive_path)
+    _download_file(FFMPEG_WINDOWS_URL, archive_path, progress_cb=progress_cb)
 
     ffmpeg_member = None
     ffprobe_member = None
@@ -553,10 +570,10 @@ def _install_ffmpeg_windows():
     archive_path.unlink(missing_ok=True)
 
 
-def _install_ytdlp_windows():
+def _install_ytdlp_windows(progress_cb=None):
     """Download yt-dlp.exe into runtime bin."""
     dest = RUNTIME_BIN_DIR / "yt-dlp.exe"
-    _download_file(YTDLP_WINDOWS_URL, dest)
+    _download_file(YTDLP_WINDOWS_URL, dest, progress_cb=progress_cb)
 
 
 def _install_deno_windows():

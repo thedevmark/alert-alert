@@ -1457,10 +1457,30 @@ def detach_console():
         ctypes.windll.kernel32.FreeConsole()
 
 
+def run_selftest_deps(result_path):
+    """Headless: exercise the real dependency-install path (yt-dlp) in this
+    (possibly frozen) build, so a progress_cb signature mismatch between
+    native_app and app can't ship undetected. Exit 0 = install path works."""
+    QApplication(sys.argv)
+    prog = {"n": 0}
+    res = {"v": None}
+    w = DepInstallWorker(["yt-dlp"])
+    w.progress.connect(lambda p, l: prog.__setitem__("n", prog["n"] + 1))
+    w.done.connect(lambda ok, msg: res.__setitem__("v", (ok, msg)))
+    w.run()
+    ok, msg = res["v"] or (False, "no result")
+    Path(result_path).write_text(
+        f"ok={ok} progress_events={prog['n']} msg={msg}", encoding="utf-8")
+    return 0 if ok else 2
+
+
 def main():
     if "--selftest" in sys.argv:
         i = sys.argv.index("--selftest")
         return run_selftest(sys.argv[i + 1], sys.argv[i + 2])
+    if "--selftest-deps" in sys.argv:
+        i = sys.argv.index("--selftest-deps")
+        return run_selftest_deps(sys.argv[i + 1])
     app = QApplication(sys.argv)
     app.setApplicationName("Alert! Alert!")
     app.setStyleSheet(QSS)
