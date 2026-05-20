@@ -1243,7 +1243,7 @@ class MainWindow(QMainWindow):
         self.load_btn.setEnabled(False); self.status.setText("Starting download…")
         self.dl = DownloadWorker(url)
         self.dl.progress.connect(self.status.setText)
-        self.dl.finished_ok.connect(self._loaded)
+        self.dl.finished_ok.connect(self._add_source)
         self.dl.failed.connect(self._dl_failed)
         self.dl.start()
 
