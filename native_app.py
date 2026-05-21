@@ -741,31 +741,6 @@ class EmptyState(QWidget):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Welcome overlay (first run)
-# ──────────────────────────────────────────────────────────────────────
-class WelcomeOverlay(QWidget):
-    def __init__(self, parent, on_start):
-        super().__init__(parent)
-        self.setObjectName("welcomeBackdrop")
-        self._on_start = on_start
-        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
-        card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(460)
-        c = QVBoxLayout(card); c.setContentsMargins(36, 40, 36, 40); c.setSpacing(16)
-        badge = QLabel("!"); badge.setObjectName("welcomeBadge")
-        badge.setAlignment(Qt.AlignCenter); badge.setFixedSize(84, 84)
-        title = QLabel("Alert! Alert!"); title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
-        sub = QLabel("Turn any clip into a stream alert — trim, crop, export. Fast.")
-        sub.setObjectName("welcomeSub"); sub.setWordWrap(True); sub.setAlignment(Qt.AlignCenter)
-        steps = QLabel("①  Load a URL or open a file\n②  Crop & set in/out on the video\n③  Export your alert")
-        steps.setObjectName("welcomeSteps")
-        btn = QPushButton("Get Started"); btn.setObjectName("primary"); btn.setFixedWidth(190)
-        btn.clicked.connect(lambda: self._on_start and self._on_start())
-        for w in (badge, title, sub, steps, btn):
-            c.addWidget(w, alignment=Qt.AlignCenter)
-        outer.addWidget(card)
-
-
-# ──────────────────────────────────────────────────────────────────────
 # Dependency consent overlay (shown only when ffmpeg/ytdlp are missing)
 # ──────────────────────────────────────────────────────────────────────
 FFMPEG_SOURCE_URL = "https://www.gyan.dev/ffmpeg/builds/"
@@ -1194,7 +1169,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._show_empty)  # centered start screen until first clip
         QTimer.singleShot(0, self._check_dependencies)
 
-    # --- menu / welcome ---
+    # --- menu ---
     def _build_menu(self):
         m = self.menuBar().addMenu("&App")
         a_open = QAction("Open Output Folder", self); a_open.triggered.connect(self._open_output)
@@ -1260,9 +1235,6 @@ class MainWindow(QMainWindow):
                           "<b>Alert! Alert!</b><br>Native build — trim, crop & export "
                           "stream alerts fast.<br>Built with PySide6 + ffmpeg.")
 
-    def _maybe_welcome(self):
-        self._show_empty()  # the empty-state start screen is the greeting now
-
     def _show_empty(self):
         if not self.queue:
             self.empty.setGeometry(self.centralWidget().rect())
@@ -1287,7 +1259,7 @@ class MainWindow(QMainWindow):
                    if not results.get(n, {}).get("installed")]
         if not missing:
             self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
-            self._maybe_welcome()
+            self._show_empty()
             return
         self._missing_deps = missing
         self.deps = DepsConsentOverlay(
@@ -1308,7 +1280,7 @@ class MainWindow(QMainWindow):
         if self.deps:
             self.deps.hide(); self.deps.deleteLater(); self.deps = None
         self.status.setText("Ready — dependencies installed.")
-        self._maybe_welcome()
+        self._show_empty()
 
     def _on_deps_failed(self, msg):
         from PySide6.QtWidgets import QMessageBox
@@ -1328,12 +1300,10 @@ class MainWindow(QMainWindow):
             "and yt-dlp are installed and available.")
         if self.deps:
             self.deps.hide(); self.deps.deleteLater(); self.deps = None
-        self._maybe_welcome()
+        self._show_empty()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if getattr(self, "welcome", None) and self.welcome.isVisible():
-            self.welcome.setGeometry(self.centralWidget().rect())
         if getattr(self, "deps", None) and self.deps.isVisible():
             self.deps.setGeometry(self.centralWidget().rect())
         if getattr(self, "tour", None) and self.tour.isVisible():
@@ -1837,7 +1807,6 @@ QMenu::item:selected {{ background: {ACCENT}; color: #0f1014; }}
 #welcomeBadge {{ background: {ACCENT}; color: #0f1014; font-size: 46px; font-weight: 800; border-radius: 42px; }}
 #welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
 #welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
-#welcomeSteps {{ color: #9aa0ab; font-size: 14px; }}
 #depsSources {{ color: #9aa0ab; font-size: 12px; }}
 #depsSources a {{ color: {ACCENT}; }}
 #wave {{ background: #0f1014; border-radius: 8px; }}
