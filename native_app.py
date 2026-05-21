@@ -495,7 +495,8 @@ class WaveformWorker(QThread):
     def run(self):
         try:
             run_subprocess([FFMPEG, "-y", "-i", str(self.src), "-filter_complex",
-                            f"showwavespic=s=1200x80:colors={ACCENT}",
+                            "aformat=channel_layouts=mono,"
+                            "showwavespic=s=1200x140:colors=#9ec0ff:scale=sqrt",
                             "-frames:v", "1", str(self.out)], timeout=60)
             if Path(self.out).exists():
                 self.done.emit(str(self.out))
@@ -672,18 +673,34 @@ class Scrubber(QWidget):
     def paintEvent(self, event):
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
         w, h = self.width(), self.height()
+        track = QRectF(0, 0, w, h)
+        # track background
+        p.setPen(Qt.NoPen); p.setBrush(QColor("#0c0e13")); p.drawRoundedRect(track, 8, 8)
+        # waveform centered on the track baseline
         if self._pix and not self._pix.isNull():
             p.drawPixmap(self.rect(), self._pix)
+        # faint center baseline
+        p.setPen(QPen(QColor(255, 255, 255, 22), 1)); p.drawLine(QPointF(0, h / 2), QPointF(w, h / 2))
         xi, xo = self._in * w, self._out * w
-        p.setPen(Qt.NoPen); p.setBrush(QColor(0, 0, 0, 150))
+        px = max(xi, min(self._frac * w, xo))
+        # dim everything outside the trim region
+        p.setPen(Qt.NoPen); p.setBrush(QColor(8, 9, 12, 170))
         p.drawRect(QRectF(0, 0, xi, h)); p.drawRect(QRectF(xo, 0, w - xo, h))
+        # played progress inside the trim (subtle accent wash up to the playhead)
+        if px > xi:
+            c = QColor(ACCENT); c.setAlpha(48); p.setBrush(c)
+            p.drawRect(QRectF(xi, 0, px - xi, h))
+        # trim region outline
         pen = QPen(QColor(ACCENT)); pen.setWidth(2); p.setPen(pen); p.setBrush(Qt.NoBrush)
-        p.drawRect(QRectF(xi, 1, max(1.0, xo - xi), h - 2))
-        p.setPen(Qt.NoPen); p.setBrush(QColor(ACCENT))
+        p.drawRoundedRect(QRectF(xi + 1, 1, max(1.0, xo - xi - 2), h - 2), 6, 6)
+        # in / out handles with a grip notch
         for x in (xi, xo):
-            p.drawRoundedRect(QRectF(x - 3, 0, 6, h), 2, 2)
-        ph = QPen(QColor("#ffffff")); ph.setWidth(2); p.setPen(ph)
-        p.drawLine(QPointF(self._frac * w, 0), QPointF(self._frac * w, h))
+            p.setPen(Qt.NoPen); p.setBrush(QColor(ACCENT)); p.drawRoundedRect(QRectF(x - 4, 0, 8, h), 3, 3)
+            p.setPen(QPen(QColor("#0d1117"), 1))
+            p.drawLine(QPointF(x, h * 0.36), QPointF(x, h * 0.64))
+        # playhead: bright line + a grabber dot on top
+        p.setPen(QPen(QColor("#ffffff"), 2)); p.drawLine(QPointF(px, 0), QPointF(px, h))
+        p.setPen(Qt.NoPen); p.setBrush(QColor("#ffffff")); p.drawEllipse(QPointF(px, 7), 5, 5)
 
     def mousePressEvent(self, event):
         if not self.width():
@@ -763,12 +780,13 @@ class WelcomeScreen(GradientBackdrop):
         wordmark = QLabel('Alert<span style="color:#FFB547;">!</span> Alert<span style="color:#EEF4FA;">!</span>')
         wordmark.setTextFormat(Qt.RichText); wordmark.setObjectName("emptyWordmark"); wordmark.setAlignment(Qt.AlignCenter)
         col.addWidget(wordmark, alignment=Qt.AlignCenter); col.addSpacing(12)
-        head = QLabel("Turn a video into a finished alert clip."); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
+        head = QLabel("Turn any video into a finished alert clip."); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
         col.addWidget(head, alignment=Qt.AlignCenter); col.addSpacing(14)
-        sub = QLabel("We'll walk you through it on a sample clip — load, frame, trim, and export. Takes about a minute.")
-        sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True); sub.setFixedWidth(460)
+        sub = QLabel("Pull a clip from a URL or a file, crop and trim it, and export a clean stream "
+                     "alert. We'll walk you through your first one — about a minute.")
+        sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True); sub.setFixedWidth(470)
         col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(32)
-        self.start_btn = QPushButton("Start tour  →"); self.start_btn.setObjectName("ctaAmber")
+        self.start_btn = QPushButton("Get started  →"); self.start_btn.setObjectName("ctaAmber")
         self.start_btn.setFixedHeight(52); self.start_btn.setMinimumWidth(206); self.start_btn.setCursor(Qt.PointingHandCursor)
         sh = QGraphicsDropShadowEffect(self); sh.setColor(QColor(255, 181, 71, 110))
         sh.setBlurRadius(48); sh.setOffset(0, 0); self.start_btn.setGraphicsEffect(sh)  # soft halo, not a hard drop
@@ -1253,9 +1271,9 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._last_output = None
-        self.welcome = WelcomeScreen(central, self._start_onboarding, self._skip_onboarding)  # first-run only
+        self.welcome = WelcomeScreen(central, self._begin_onboarding, self._skip_onboarding)  # first-run only
         self.empty = EmptyScreen(central, self._submit_url, self.on_open_file)  # clean add screen
-        self._force_tour = False
+        self._onboarding = False  # True from 'Get started' until the first clip -> starts tour
         self.deps = None  # created on demand by _check_dependencies (DepsConsentOverlay)
         self.deps_worker = None
         self._missing = []
@@ -1305,7 +1323,8 @@ class MainWindow(QMainWindow):
         if self.queue:
             self.tour.start()
         else:
-            self.status.setText("Add a clip (or Try sample) first, then take the tour.")
+            self._onboarding = True  # load the bundled sample, then the tour fires on add
+            self.on_sample()
 
     def _toggle_console(self, on):
         from PySide6.QtCore import QSettings
@@ -1363,15 +1382,17 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QSettings
         QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
 
-    def _start_onboarding(self):
-        """Led onboarding: load the (bundled, instant) sample clip, then run the tour on it."""
+    def _begin_onboarding(self):
+        """'Get started' → go to the paste-a-URL screen. The first clip the user
+        adds then kicks off the guided editing tour."""
         self._mark_welcomed()
+        self._onboarding = True
         self.welcome.hide()
-        self._force_tour = True
-        self.on_sample()
+        self._show_start()  # -> EmptyScreen: "paste a video URL"
 
     def _skip_onboarding(self):
         self._mark_welcomed()
+        self._onboarding = False
         self.welcome.hide()
         self._show_start()  # -> clean add screen now that we're welcomed
 
@@ -1555,8 +1576,8 @@ class MainWindow(QMainWindow):
 
     def _dl_failed(self, msg):
         self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
-        if self._force_tour:
-            self._force_tour = False
+        if self._onboarding:
+            self._onboarding = False
             self._show_start()
 
     @staticmethod
@@ -1580,8 +1601,8 @@ class MainWindow(QMainWindow):
         self.queue_list.setCurrentRow(len(self.queue) - 1)  # -> _select_row loads it
         self.welcome.hide(); self.empty.hide()  # leave the start screen now that there's a clip
         self.status.setText(f"Added {self._short(name)}  ·  {len(self.queue)} in queue")
-        if self._force_tour:           # came from "Start tour" — run the guided tour
-            self._force_tour = False
+        if self._onboarding:           # first clip during onboarding — run the guided editing tour
+            self._onboarding = False
             QTimer.singleShot(450, self.tour.start)
 
     # --- queue: select / save / restore ---
