@@ -18,13 +18,18 @@ import subprocess
 import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer, QPoint, QRect
-from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath, QRegion
+from PySide6.QtCore import (
+    Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer, QPoint, QRect,
+    QPropertyAnimation, QEasingCurve,
+)
+from PySide6.QtGui import (
+    QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath, QRegion, QRadialGradient,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem, QProgressBar, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QGraphicsDropShadowEffect,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -707,37 +712,77 @@ class Scrubber(QWidget):
 # Empty state — the start screen shown until a clip is loaded
 # ──────────────────────────────────────────────────────────────────────
 class EmptyState(QWidget):
-    def __init__(self, parent, on_url, on_file, on_sample):
+    """The branded, led welcome (ported from the web app): navy→amber radial
+    backdrop, glowing app icon, the Alert! Alert! wordmark, and a confident amber
+    CTA that walks you through making your first alert with a sample clip."""
+
+    def __init__(self, parent, on_start_tour, on_skip):
         super().__init__(parent)
         self.setObjectName("emptyBackdrop")
-        self.setAttribute(Qt.WA_StyledBackground, True)  # make the opaque QSS bg actually paint
-        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
-        card = QFrame(); card.setObjectName("emptyCard"); card.setFixedWidth(560)
-        c = QVBoxLayout(card); c.setContentsMargins(40, 44, 40, 44); c.setSpacing(16)
-        logo = QLabel(); logo.setAlignment(Qt.AlignCenter)
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter); outer.setContentsMargins(24, 24, 24, 24)
+        col = QVBoxLayout(); col.setAlignment(Qt.AlignCenter); col.setSpacing(0)
+
+        # app icon with a soft amber glow (gently pulsing)
+        icon = QLabel(); icon.setAlignment(Qt.AlignCenter)
         lp = INTERNAL_DIR / "static" / "img" / "logo.png"
         if lp.exists():
-            logo.setPixmap(QPixmap(str(lp)).scaled(84, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        title = QLabel("Make your first alert"); title.setObjectName("emptyTitle"); title.setAlignment(Qt.AlignCenter)
-        sub = QLabel("Paste a video URL, drop a file in, or try a sample.\nClips you add stack up in the queue.")
+            icon.setPixmap(QPixmap(str(lp)).scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        glow = QGraphicsDropShadowEffect(self); glow.setColor(QColor(255, 181, 71, 175))
+        glow.setBlurRadius(56); glow.setOffset(0, 0); icon.setGraphicsEffect(glow)
+        self._glow = QPropertyAnimation(glow, b"blurRadius", self)
+        self._glow.setKeyValueAt(0.0, 46); self._glow.setKeyValueAt(0.5, 82); self._glow.setKeyValueAt(1.0, 46)
+        self._glow.setDuration(2800); self._glow.setEasingCurve(QEasingCurve.InOutSine); self._glow.setLoopCount(-1)
+        self._glow.start()
+        col.addWidget(icon, alignment=Qt.AlignCenter); col.addSpacing(22)
+
+        wordmark = QLabel('Alert<span style="color:#FFB547;">!</span> Alert<span style="color:#EEF4FA;">!</span>')
+        wordmark.setTextFormat(Qt.RichText); wordmark.setObjectName("emptyWordmark"); wordmark.setAlignment(Qt.AlignCenter)
+        col.addWidget(wordmark, alignment=Qt.AlignCenter); col.addSpacing(12)
+        head = QLabel("Turn a video into a finished alert clip."); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
+        col.addWidget(head, alignment=Qt.AlignCenter); col.addSpacing(14)
+        sub = QLabel("We'll walk you through it on a sample clip — load, frame, trim, and export. Takes about a minute.")
         sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True)
-        self.url = QLineEdit(); self.url.setPlaceholderText("Paste a video URL…")
-        self.url.returnPressed.connect(lambda: on_url(self.url.text()))
-        row = QHBoxLayout(); row.setSpacing(8); row.setAlignment(Qt.AlignCenter)
-        b_url = QPushButton("Add URL"); b_url.setObjectName("primary"); b_url.setFixedWidth(150)
-        b_url.clicked.connect(lambda: on_url(self.url.text()))
-        b_file = QPushButton("Add file"); b_file.clicked.connect(on_file)
-        b_sample = QPushButton("Try sample"); b_sample.clicked.connect(on_sample)
-        row.addWidget(b_url); row.addWidget(b_file); row.addWidget(b_sample)
-        for w in (logo, title, sub):
-            c.addWidget(w, alignment=Qt.AlignCenter)
-        c.addWidget(self.url); c.addLayout(row)
-        outer.addWidget(card)
+        sub.setFixedWidth(460)
+        col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(28)
+
+        self.status = QLabel(""); self.status.setObjectName("emptyStatus"); self.status.setAlignment(Qt.AlignCenter)
+        self.status.hide()
+        col.addWidget(self.status, alignment=Qt.AlignCenter); col.addSpacing(6)
+
+        self.start_btn = QPushButton("Start tour  →"); self.start_btn.setObjectName("ctaAmber")
+        self.start_btn.setFixedHeight(54); self.start_btn.setMinimumWidth(220)
+        self.start_btn.clicked.connect(on_start_tour)
+        col.addWidget(self.start_btn, alignment=Qt.AlignCenter); col.addSpacing(16)
+        self.skip_btn = QPushButton("Skip — let me add my own clip"); self.skip_btn.setObjectName("skipLink")
+        self.skip_btn.setCursor(Qt.PointingHandCursor); self.skip_btn.clicked.connect(on_skip)
+        col.addWidget(self.skip_btn, alignment=Qt.AlignCenter)
+        outer.addLayout(col)
+
+    def set_busy(self, text):
+        self.status.setText(text); self.status.show()
+        self.start_btn.setEnabled(False); self.skip_btn.setEnabled(False)
+
+    def set_error(self, text):
+        self.status.setText(text); self.status.show()
+        self.start_btn.setEnabled(True); self.skip_btn.setEnabled(True)
 
     def showEvent(self, event):
         if self.parent():
             self.setGeometry(self.parent().rect())  # always cover the whole window
         super().showEvent(event)
+
+    def paintEvent(self, event):
+        # Branded backdrop: deep navy radial weighted to the bottom, with a warm
+        # amber glow up top — matching the web app's welcome screen.
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
+        w, h = self.width(), self.height()
+        base = QRadialGradient(w * 0.5, h * 1.15, max(w, h) * 1.25)
+        base.setColorAt(0.0, QColor("#182739")); base.setColorAt(0.62, QColor("#0D1521"))
+        base.setColorAt(1.0, QColor("#0D1521"))
+        p.fillRect(self.rect(), QBrush(base))
+        amber = QRadialGradient(w * 0.5, h * 0.27, max(w, h) * 0.62)
+        amber.setColorAt(0.0, QColor(255, 181, 71, 40)); amber.setColorAt(0.6, QColor(255, 181, 71, 0))
+        p.fillRect(self.rect(), QBrush(amber))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1140,8 +1185,9 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._last_output = None
-        self.empty = EmptyState(central, self._empty_add_url, self.on_open_file, self.on_sample)
+        self.empty = EmptyState(central, self._start_onboarding, self._skip_onboarding)
         self._toured = False
+        self._force_tour = False
         self.deps = None  # created on demand by _check_dependencies (DepsConsentOverlay)
         self.deps_worker = None
         self._missing = []
@@ -1240,11 +1286,18 @@ class MainWindow(QMainWindow):
             self.empty.setGeometry(self.centralWidget().rect())
             self.empty.show(); self.empty.raise_()
 
-    def _empty_add_url(self, text):
-        text = (text or "").strip()
-        if text:
-            self.url_input.setText(text)
-            self.on_load_url()
+    def _start_onboarding(self):
+        """Led onboarding: load a sample clip, then run the guided tour on it."""
+        self.empty.set_busy("Loading a sample clip to walk you through…")
+        self._force_tour = True
+        self.on_sample()
+
+    def _skip_onboarding(self):
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("toured", True)
+        self._toured = True
+        self.empty.hide()
+        self.status.setText("Add a clip with the bar up top — paste a URL, Add file, or Try sample.")
 
     def _tour_done(self):
         self.status.setText("You're set — add a clip to start.")
@@ -1404,6 +1457,9 @@ class MainWindow(QMainWindow):
 
     def _dl_failed(self, msg):
         self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
+        if self._force_tour and self.empty.isVisible():
+            self._force_tour = False
+            self.empty.set_error("Couldn't load the sample — check your connection, or Skip and add your own.")
 
     @staticmethod
     def _short(name, n=26):
@@ -1426,7 +1482,11 @@ class MainWindow(QMainWindow):
         self.queue_list.setCurrentRow(len(self.queue) - 1)  # -> _select_row loads it
         self.empty.hide()  # leave the start screen now that there's a clip
         self.status.setText(f"Added {self._short(name)}  ·  {len(self.queue)} in queue")
-        self._maybe_start_tour()
+        if self._force_tour:           # came from "Start tour" — always run it
+            self._force_tour = False
+            QTimer.singleShot(450, self.tour.start)
+        else:
+            self._maybe_start_tour()
 
     def _maybe_start_tour(self):
         from PySide6.QtCore import QSettings
@@ -1763,10 +1823,16 @@ QLabel {{ background: transparent; }}
 #infotip {{ color: #6b7280; font-size: 12px; }}
 #statusline {{ color: #c7ccd6; font-size: 12px; }}
 #drophint {{ background: rgba(13,14,18,0.92); border: 3px dashed {ACCENT}; border-radius: 16px; color: {ACCENT}; font-size: 22px; font-weight: 700; }}
-#emptyBackdrop {{ background: #0f1014; }}
-#emptyCard {{ background: #15171d; border: 1px solid #2c313c; border-radius: 18px; }}
-#emptyTitle {{ font-size: 24px; font-weight: 800; color: #ffffff; }}
-#emptySub {{ color: #9aa0ad; font-size: 13px; }}
+#emptyWordmark {{ font-size: 30px; font-weight: 900; color: #EEF4FA; letter-spacing: -0.5px; }}
+#emptyTitle {{ font-size: 30px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }}
+#emptySub {{ color: #9fb0c6; font-size: 15px; line-height: 1.5; }}
+#emptyStatus {{ color: #FFB547; font-size: 13px; }}
+#ctaAmber {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFC468, stop:1 #FFB547); color: #0D1521; border: none; border-radius: 14px; font-size: 16px; font-weight: 800; padding: 0 32px; }}
+#ctaAmber:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFD080, stop:1 #FFC153); }}
+#ctaAmber:pressed {{ background: #F0A838; }}
+#ctaAmber:disabled {{ background: #6b5a37; color: #b9a37a; }}
+#skipLink {{ background: transparent; border: none; color: #9fb0c6; font-size: 14px; padding: 4px; }}
+#skipLink:hover {{ color: #EEF4FA; }}
 QToolTip {{ background: #1a1d25; color: #e6e9ef; border: 1px solid #2c313c; padding: 6px 8px; border-radius: 6px; }}
 #muted {{ color: #868c98; font-size: 12px; }}
 #mono {{ font-family: Consolas, monospace; color: #c7ccd6; }}
