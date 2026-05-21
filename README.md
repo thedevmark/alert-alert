@@ -26,12 +26,12 @@ Alert! Alert! is a small native desktop app for streamers: pull in a clip from a
 - **Load** from a video URL (via yt-dlp) or a local file.
 - **Preview** natively — H.264 plays directly, no browser engine, no transcode workaround.
 - **Crop** with aspect-ratio presets (1:1, 16:9, 9:16, 4:3, 3:4, 21:9), zoom, and a draggable box with rule-of-thirds guides.
-- **Trim** with in/out points, a waveform strip, and keyboard shortcuts.
+- **Trim** right on the timeline — drag the in/out handles on the waveform scrubber, or use keyboard shortcuts.
 - **Export** a square alert: resolution + quality presets, audio normalize, fades, and an optional end-buffer freeze.
 - **Overrides** — swap in a separate audio track, or use a still image as the visual with the clip's audio.
 - **Batch queue** — line up multiple clips, each with its own crop/trim/overrides, and Export All in one go.
 
-It's a native PySide6 (Qt Widgets) app — no web server, no embedded browser. The packaged exe is ~72 MB and launches instantly.
+It's a native PySide6 (Qt Widgets) app — no web server, no embedded browser. The packaged exe is ~70 MB and launches instantly.
 
 ---
 
@@ -76,9 +76,11 @@ Requirements: Windows (primary target), Python 3.10+, and internet access for UR
 
 ## Menu
 
+- **Take the tour** — replay the guided walkthrough (loads a sample clip if your queue is empty).
+- **Check dependencies** — see FFmpeg / ffprobe / yt-dlp status anytime.
 - **Update yt-dlp** — pull the latest yt-dlp so YouTube changes don't break downloads.
 - **Show log terminal** — open a console alongside the app for live logs (off by default; also `--console` on launch).
-- **Open Output Folder**, **Replay Welcome**, **About**.
+- **Open Output Folder**, **About**.
 
 ---
 
