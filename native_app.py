@@ -23,7 +23,7 @@ from PySide6.QtGui import QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIco
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
-    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QProgressBar, QFrame,
+    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem, QProgressBar, QFrame,
     QListWidget, QListWidgetItem,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -260,9 +260,24 @@ class CropView(QGraphicsView):
         self.setScene(self._scene)
         self.video_item = QGraphicsVideoItem()
         self._scene.addItem(self.video_item)
+        self.image_item = QGraphicsPixmapItem(); self.image_item.setZValue(5); self.image_item.hide()
+        self._scene.addItem(self.image_item)
         self.crop = CropItem(on_change=self.viewport().update)
         self._scene.addItem(self.crop)
         self._w = self._h = 0
+
+    def show_image(self, path):
+        """Preview a still-image override (cover-scaled), or revert to the video."""
+        if path:
+            pm = QPixmap(str(path))
+            if not pm.isNull() and self._w:
+                pm = pm.scaled(int(self._w), int(self._h), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                self.image_item.setPixmap(pm)
+                self.image_item.setOffset((self._w - pm.width()) / 2, (self._h - pm.height()) / 2)
+                self.image_item.show(); self.video_item.hide()
+        else:
+            self.image_item.hide(); self.video_item.show()
+        self.viewport().update()
 
     def set_source_size(self, w, h):
         self._w, self._h = w, h
@@ -1035,6 +1050,11 @@ class MainWindow(QMainWindow):
         self.audio = QAudioOutput(); self.audio.setVolume(0.15)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.view.video_item)
+        # secondary player to preview a swapped-in audio override
+        self.aud_player = QMediaPlayer()
+        self.aud_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.aud_out = QAudioOutput(); self.aud_out.setVolume(0.15)
+        self.aud_player.setAudioOutput(self.aud_out)
 
         # transport: play button + time, with the combined scrubber below
         tr = QHBoxLayout()
@@ -1516,8 +1536,12 @@ class MainWindow(QMainWindow):
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
+            if self.audio_src:
+                self.aud_player.pause()
         else:
             self.player.play()
+            if self.audio_src:
+                self.aud_player.play()
 
     def on_position(self, ms):
         if self.duration:
@@ -1618,9 +1642,23 @@ class MainWindow(QMainWindow):
 
     # --- overrides ---
     def _update_ovr_lbl(self):
-        a = Path(self.audio_src).name if self.audio_src else "clip"
-        v = Path(self.image_src).name if self.image_src else "video"
-        self.ovr_lbl.setText(f"Audio: {a} · Visual: {v}")
+        a = self._short(Path(self.audio_src).name) if self.audio_src else "clip"
+        v = self._short(Path(self.image_src).name) if self.image_src else "video"
+        self.ovr_lbl.setText(f"Audio: {a}  ·  Visual: {v}")
+        self._reflect_overrides()
+
+    def _reflect_overrides(self):
+        """Make the preview show what export will use: still image instead of
+        video, and the swapped audio instead of the clip's own."""
+        self.view.show_image(self.image_src)  # None reverts to the video
+        if self.audio_src:
+            self.audio.setMuted(True)
+            self.aud_player.setSource(QUrl.fromLocalFile(self.audio_src))
+            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.aud_player.play()
+        else:
+            self.audio.setMuted(False)
+            self.aud_player.stop()
 
     def on_audio_file(self):
         path, _ = QFileDialog.getOpenFileName(
