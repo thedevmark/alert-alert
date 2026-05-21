@@ -20,6 +20,7 @@ a = Analysis(
     datas=[
         ('static/favicon.ico', 'static'),      # window/exe icon
         ('static/img/logo.png', 'static/img'),  # app icon on the welcome screen
+        ('static/sample.mp4', 'static'),        # bundled sample clip (instant Try sample / tour)
     ],
     hiddenimports=[
         'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
