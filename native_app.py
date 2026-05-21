@@ -20,7 +20,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     Qt, QThread, Signal, QUrl, QRectF, QPointF, QSizeF, QTimer, QPoint, QRect,
-    QPropertyAnimation, QEasingCurve,
+    QPropertyAnimation, QEasingCurve, QVariantAnimation,
 )
 from PySide6.QtGui import (
     QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath, QRegion, QRadialGradient,
@@ -753,7 +753,10 @@ class EmptyState(QWidget):
         col.addWidget(self.status, alignment=Qt.AlignCenter); col.addSpacing(6)
 
         self.start_btn = QPushButton("Start tour  →"); self.start_btn.setObjectName("ctaAmber")
-        self.start_btn.setFixedHeight(54); self.start_btn.setMinimumWidth(220)
+        self.start_btn.setFixedHeight(56); self.start_btn.setMinimumWidth(230)
+        self.start_btn.setCursor(Qt.PointingHandCursor)
+        sh = QGraphicsDropShadowEffect(self); sh.setColor(QColor(255, 181, 71, 120))
+        sh.setBlurRadius(34); sh.setOffset(0, 9); self.start_btn.setGraphicsEffect(sh)
         self.start_btn.clicked.connect(on_start_tour)
         col.addWidget(self.start_btn, alignment=Qt.AlignCenter); col.addSpacing(16)
         self.skip_btn = QPushButton("Skip — let me add my own clip"); self.skip_btn.setObjectName("skipLink")
@@ -919,6 +922,14 @@ class TourOverlay(QWidget):
         for w in (self.counter, self.title, self.body):
             c.addWidget(w)
         c.addLayout(btns)
+        self._pulse = 1.0
+        self._pulse_anim = QVariantAnimation(self)
+        self._pulse_anim.setStartValue(0.0); self._pulse_anim.setEndValue(1.0)
+        self._pulse_anim.setDuration(520); self._pulse_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._pulse_anim.valueChanged.connect(self._on_pulse)
+
+    def _on_pulse(self, v):
+        self._pulse = float(v); self.update()
 
     def start(self):
         self._i = 0
@@ -943,19 +954,29 @@ class TourOverlay(QWidget):
         self._hole = r.adjusted(-8, -8, 8, 8) if not r.isNull() else QRect()
         self.card.adjustSize()
         cw, ch = self.card.width(), self.card.height()
+        W, H = self.width(), self.height()
         if self._hole.isNull():
-            cx, cy = (self.width() - cw) // 2, (self.height() - ch) // 2
+            cx, cy = (W - cw) // 2, (H - ch) // 2
         else:
-            cx = min(max(self._hole.center().x() - cw // 2, 14), self.width() - cw - 14)
-            if self._hole.bottom() + ch + 16 <= self.height():
-                cy = self._hole.bottom() + 14
-            else:
-                cy = max(14, self._hole.top() - ch - 14)
+            hb = self._hole
+            if hb.bottom() + ch + 16 <= H:               # below the target
+                cx = min(max(hb.center().x() - cw // 2, 14), W - cw - 14); cy = hb.bottom() + 16
+            elif hb.top() - ch - 16 >= 0:                 # above
+                cx = min(max(hb.center().x() - cw // 2, 14), W - cw - 14); cy = hb.top() - ch - 16
+            elif hb.right() + cw + 20 <= W:               # to the right (tall targets like the queue)
+                cx = hb.right() + 18; cy = min(max(hb.center().y() - ch // 2, 14), H - ch - 14)
+            else:                                         # to the left
+                cx = max(14, hb.left() - cw - 18); cy = min(max(hb.center().y() - ch // 2, 14), H - ch - 14)
         self.card.move(cx, cy)
-        # Punch a real hole so the spotlighted control stays clickable (clicks in
-        # the hole fall through to the widget below).
+        # Scrim everywhere except the spotlight hole (so it's click-through), but
+        # always keep the card painted — never clip it against the hole.
         full = QRegion(self.rect())
-        self.setMask(full.subtracted(QRegion(self._hole)) if not self._hole.isNull() else full)
+        if not self._hole.isNull():
+            region = full.subtracted(QRegion(self._hole)).united(QRegion(self.card.geometry()))
+        else:
+            region = full
+        self.setMask(region)
+        self._pulse_anim.stop(); self._pulse_anim.start()  # animate the highlight in on each step
         self.update()
 
     def _next(self):
@@ -978,10 +999,14 @@ class TourOverlay(QWidget):
         if not self._hole.isNull():
             hole = QPainterPath(); hole.addRoundedRect(QRectF(self._hole), 10, 10)
             path = path.subtracted(hole)
-        p.fillPath(path, QColor(8, 9, 12, 205))
+        p.fillPath(path, QColor(8, 9, 12, 140))  # lighter scrim — keep the UI readable
         if not self._hole.isNull():
-            pen = QPen(QColor(ACCENT)); pen.setWidth(2); p.setPen(pen); p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(QRectF(self._hole), 10, 10)
+            grow = (1.0 - self._pulse) * 16       # ring "focuses in" on each step change
+            ring = QRectF(self._hole).adjusted(-grow, -grow, grow, grow)
+            col = QColor(ACCENT); col.setAlphaF(0.45 + 0.55 * self._pulse)
+            pen = QPen(col); pen.setWidthF(2 + (1 - self._pulse) * 2.5)
+            p.setPen(pen); p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(ring, 12, 12)
 
     def mousePressEvent(self, event):
         event.accept()  # swallow clicks on the scrim during the tour
@@ -1003,6 +1028,30 @@ class QueueItem:
         self.audio_src = None
         self.image_src = None
         self.status = ""            # "", "ok", "fail"
+
+
+class Segmented(QWidget):
+    """A compact row of mutually-exclusive buttons — a friendlier dropdown."""
+
+    def __init__(self, items, default, fmt=None):
+        super().__init__()
+        self._items = list(items)
+        self._value = self._items[default]
+        lay = QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(6)
+        self._btns = []
+        for v in self._items:
+            b = QPushButton(fmt(v) if fmt else str(v)); b.setObjectName("seg"); b.setCheckable(True)
+            b.setChecked(v == self._value)
+            b.clicked.connect(lambda _c=False, val=v: self._select(val))
+            lay.addWidget(b); self._btns.append(b)
+
+    def _select(self, v):
+        self._value = v
+        for b, val in zip(self._btns, self._items):
+            b.setChecked(val == v)
+
+    def currentData(self):
+        return self._value
 
 
 class MainWindow(QMainWindow):
@@ -1079,11 +1128,17 @@ class MainWindow(QMainWindow):
         self.aud_out = QAudioOutput(); self.aud_out.setVolume(0.15)
         self.aud_player.setAudioOutput(self.aud_out)
 
-        # transport: play button + time, with the combined scrubber below
-        tr = QHBoxLayout()
+        # transport: play, volume, trim/time readouts, with the scrubber below
+        tr = QHBoxLayout(); tr.setSpacing(10)
         self.play_btn = QPushButton("▶"); self.play_btn.setFixedWidth(44); self.play_btn.setEnabled(False)
+        vol_ic = QLabel("🔊"); vol_ic.setObjectName("muted")
+        self.vol = QSlider(Qt.Horizontal); self.vol.setRange(0, 100); self.vol.setValue(15)
+        self.vol.setFixedWidth(100); self.vol.setToolTip("Preview volume")
+        self.vol.valueChanged.connect(self._set_volume)
+        self.trim_lbl = QLabel("In 0:00 · Out 0:00 · 0:00"); self.trim_lbl.setObjectName("mono")
         self.time_lbl = QLabel("0:00 / 0:00"); self.time_lbl.setObjectName("mono")
-        tr.addWidget(self.play_btn); tr.addStretch(1); tr.addWidget(self.time_lbl)
+        tr.addWidget(self.play_btn); tr.addWidget(vol_ic); tr.addWidget(self.vol)
+        tr.addStretch(1); tr.addWidget(self.trim_lbl); tr.addSpacing(12); tr.addWidget(self.time_lbl)
         left.addLayout(tr)
         self.scrub = Scrubber()
         self.scrub.seek_to.connect(lambda f: self.player.setPosition(int(f * self.duration * 1000)))
@@ -1110,17 +1165,6 @@ class MainWindow(QMainWindow):
         self.zoom = self._slider(cg, "Zoom", 30, 100, 100, "%")
         p.addWidget(self.crop_group)
 
-        p.addWidget(self._h("Trim", 2))
-        self.trim_group = QWidget()
-        tg = QVBoxLayout(self.trim_group); tg.setContentsMargins(0, 0, 0, 0); tg.setSpacing(8)
-        trbtns = QHBoxLayout(); trbtns.setSpacing(8)
-        self.set_in_btn = QPushButton("Set In"); self.set_out_btn = QPushButton("Set Out")
-        trbtns.addWidget(self.set_in_btn); trbtns.addWidget(self.set_out_btn)
-        tg.addLayout(trbtns)
-        self.trim_lbl = QLabel("In 0:00 · Out 0:00 · 0:00"); self.trim_lbl.setObjectName("mono")
-        tg.addWidget(self.trim_lbl)
-        p.addWidget(self.trim_group)
-
         p.addWidget(self._h("Swap audio / visuals — optional"))
         hint = QLabel("Use a different sound, or replace the video with a still image.")
         hint.setObjectName("muted"); hint.setWordWrap(True)
@@ -1137,19 +1181,19 @@ class MainWindow(QMainWindow):
         self.ovr_lbl.setWordWrap(True)
         p.addWidget(self.ovr_lbl)
 
-        p.addWidget(self._h("Export", 3))
+        p.addWidget(self._h("Export", 2))
         self.export_group = QWidget()
         eg = QVBoxLayout(self.export_group); eg.setContentsMargins(0, 0, 0, 0); eg.setSpacing(10)
-        self.res = self._combo(eg, "Resolution", ["480", "720", "1080"], 1, lambda v: f"{v}×{v}",
-                               tip="Output size of the square alert clip, in pixels.")
-        self.preset = self._combo(eg, "Quality (CRF)", ["18", "23", "28"], 1,
-                                  {"18": "Max (18)", "23": "Balanced (23)", "28": "Small (28)"}.get,
-                                  tip="Lower CRF = higher quality + bigger file. 23 is a good balance; 28 is smallest.")
-        self.fade = self._combo(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize,
-                                tip="Fade the audio in at the start, out at the end, both, or off.")
-        self.buffer = self._combo(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
-                                  lambda v: "None" if v == "0" else f"{v}s freeze",
-                                  tip="Hold the last frame for a few seconds so the alert has room to fade out on stream.")
+        self.res = self._segment(eg, "Resolution", ["480", "720", "1080"], 1, lambda v: v,
+                                 tip="Output size of the square alert clip, in pixels.")
+        self.preset = self._segment(eg, "Quality", ["18", "23", "28"], 1,
+                                    {"18": "Best", "23": "Balanced", "28": "Small"}.get,
+                                    tip="Lower CRF = higher quality + bigger file. Balanced (23) is a good default; Small (28) is tightest.")
+        self.fade = self._segment(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize,
+                                  tip="Fade the audio in at the start, out at the end, both, or off.")
+        self.buffer = self._segment(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
+                                    lambda v: "None" if v == "0" else f"{v}s",
+                                    tip="Hold the last frame for a few seconds so the alert has room to fade out on stream.")
         self.normalize = QCheckBox("Normalize audio"); self.normalize.setChecked(True)
         self.normalize.setToolTip("Even out loudness to a consistent target (~-16 LUFS) so alerts aren't wildly louder than each other.")
         eg.addWidget(self.normalize)
@@ -1173,8 +1217,6 @@ class MainWindow(QMainWindow):
         self.url_input.returnPressed.connect(self.on_load_url)
         self.file_btn.clicked.connect(self.on_open_file)
         self.play_btn.clicked.connect(self.toggle_play)
-        self.set_in_btn.clicked.connect(self.set_in)
-        self.set_out_btn.clicked.connect(self.set_out)
         self.zoom.valueChanged.connect(lambda _v: self.set_ratio(self._current_ratio_name()))
         self.aud_file_btn.clicked.connect(self.on_audio_file)
         self.aud_url_btn.clicked.connect(self.on_audio_url)
@@ -1203,8 +1245,9 @@ class MainWindow(QMainWindow):
              "click a clip to edit it."),
             (self.crop_group, "Crop & frame",
              "Pick an aspect ratio and drag the box on the video (or use Zoom) to frame the alert."),
-            (self.trim_group, "Trim",
-             "Play the clip, then Set In / Set Out — or press I and O — to grab the exact moment."),
+            (self.scrub, "Trim",
+             "Drag the handles on the timeline to set where the alert starts and ends. "
+             "Or press I and O while it plays to snap them to the playhead."),
             (self.export_group, "Export",
              "Set size, quality, fades and normalize. Export current for this clip, or Export All "
              "to render the whole queue at once."),
@@ -1374,8 +1417,11 @@ class MainWindow(QMainWindow):
         self.qpanel.setVisible(not self.qpanel.isVisible())
 
     def on_sample(self):
-        self.url_input.setText(SAMPLE_URL)
-        self.on_load_url()
+        sample = INTERNAL_DIR / "static" / "sample.mp4"
+        if sample.exists():           # bundled — loads instantly, no download
+            self._add_source(str(sample), "Sample clip")
+        else:                         # dev fallback
+            self.url_input.setText(SAMPLE_URL); self.on_load_url()
 
     def dragEnterEvent(self, event):
         md = event.mimeData()
@@ -1433,6 +1479,17 @@ class MainWindow(QMainWindow):
             c.addItem(fmt(it) if fmt else it, it)
         c.setCurrentIndex(default); v.addWidget(c)
         layout.addWidget(box); return c
+
+    def _segment(self, layout, label, items, default, fmt=None, tip=""):
+        box = QWidget(); v = QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(5)
+        head = QHBoxLayout(); head.setSpacing(6)
+        lab = QLabel(label); lab.setObjectName("fieldlabel"); head.addWidget(lab)
+        if tip:
+            q = QLabel("ⓘ"); q.setObjectName("infotip"); q.setToolTip(tip); head.addWidget(q)
+        head.addStretch(1)
+        v.addLayout(head)
+        seg = Segmented(items, default, fmt); v.addWidget(seg)
+        layout.addWidget(box); return seg
 
     # --- source loading ---
     def _set_adding(self, busy):
@@ -1517,7 +1574,7 @@ class MainWindow(QMainWindow):
         it.audio_src, it.image_src = self.audio_src, self.image_src
 
     def _set_steps_enabled(self, on):
-        for w in (self.crop_group, self.trim_group, self.export_group,
+        for w in (self.crop_group, self.export_group,
                   self.aud_file_btn, self.aud_url_btn, self.img_btn, self.clear_ovr_btn):
             w.setEnabled(on)
         self.export_btn.setEnabled(on)
@@ -1536,7 +1593,7 @@ class MainWindow(QMainWindow):
             self.view.crop.setRect(QRectF(x, y, w, h))
             self.view.viewport().update()
         self.player.setSource(QUrl.fromLocalFile(it.path))
-        self.player.play()
+        self.player.play(); self.player.pause()  # show first frame but start paused (no loud autoplay loop)
         self.play_btn.setEnabled(True)
         self.scrub.set_position(0.0)
         self._set_steps_enabled(True)   # steps come alive once a clip is loaded
@@ -1566,6 +1623,10 @@ class MainWindow(QMainWindow):
             self._show_empty()
 
     # --- playback ---
+    def _set_volume(self, v):
+        self.audio.setVolume(v / 100.0)
+        self.aud_out.setVolume(v / 100.0)
+
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
@@ -1618,9 +1679,9 @@ class MainWindow(QMainWindow):
         elif k == Qt.Key_End and self.duration:
             self.player.setPosition(max(0, int(self.duration * 1000) - 60))
         elif k == Qt.Key_Up:
-            self.audio.setVolume(min(1.0, self.audio.volume() + 0.05))
+            self.vol.setValue(min(100, self.vol.value() + 5))
         elif k == Qt.Key_Down:
-            self.audio.setVolume(max(0.0, self.audio.volume() - 0.05))
+            self.vol.setValue(max(0, self.vol.value() - 5))
         elif k in (Qt.Key_Plus, Qt.Key_Equal):
             self.zoom.setValue(min(self.zoom.maximum(), self.zoom.value() + 5))
         elif k == Qt.Key_Minus:
@@ -1851,6 +1912,8 @@ QPushButton:disabled {{ color: #5a5f6b; background: #1a1d24; border-color: #262a
 QPushButton#primary:pressed {{ background: #4f7fb8; }}
 QPushButton#chip {{ padding: 8px 6px; min-height: 14px; }}
 QPushButton#chip:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
+QPushButton#seg {{ padding: 8px 4px; min-height: 14px; font-size: 12px; }}
+QPushButton#seg:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
 QPushButton#primary {{ background: {ACCENT}; color: #0f1014; font-weight: 700; border: none; padding: 12px; font-size: 14px; }}
 QPushButton#primary:hover {{ background: #79a6db; }}
 QPushButton#primary:disabled {{ background: #2b3340; color: #6b7280; }}
