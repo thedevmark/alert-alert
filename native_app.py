@@ -840,75 +840,74 @@ class DepsConsentOverlay(GradientBackdrop):
     pre-onboarding step when tools are missing. Nothing downloads until the user
     explicitly clicks "Download & Install" (we fetch third-party software for them)."""
 
-    def __init__(self, parent, missing, on_consent, on_skip):
+    def __init__(self, parent, results, on_install, on_continue):
         super().__init__(parent)  # GradientBackdrop: full-screen branded backdrop
-        self._on_consent = on_consent
-        self._on_skip = on_skip
-
-        names = []
-        if {"ffmpeg", "ffprobe"} & set(missing):
-            names.append("FFmpeg")
-        if "yt-dlp" in missing:
-            names.append("yt-dlp")
-        if len(names) == 2:
-            which = "FFmpeg and yt-dlp"
-        elif names:
-            which = names[0]
-        else:
-            which = "some tools"
+        self._on_install = on_install
+        self._on_continue = on_continue
+        self._missing = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
+                         if not results.get(n, {}).get("installed")]
 
         outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter)
         card = QFrame(); card.setObjectName("welcomeCard"); card.setFixedWidth(520)
-        c = QVBoxLayout(card); c.setContentsMargins(36, 36, 36, 32); c.setSpacing(14)
+        c = QVBoxLayout(card); c.setContentsMargins(36, 34, 36, 30); c.setSpacing(13)
 
         badge = QLabel("!"); badge.setObjectName("welcomeBadge")
-        badge.setAlignment(Qt.AlignCenter); badge.setFixedSize(72, 72)
-        title = QLabel("One-time setup")
+        badge.setAlignment(Qt.AlignCenter); badge.setFixedSize(64, 64)
+        title = QLabel("First-time setup")
         title.setObjectName("welcomeTitle"); title.setAlignment(Qt.AlignCenter)
 
-        body = QLabel(
-            f"Alert! Alert! needs <b>{which}</b> to download and export clips, "
-            f"but {'they are' if len(names) == 2 else 'it is'} not installed on this PC.<br><br>"
-            "Alert! Alert! can download these for you. They're third-party tools "
-            "with their own licenses, fetched from their official sources:")
-        body.setObjectName("welcomeSub"); body.setWordWrap(True); body.setAlignment(Qt.AlignCenter)
+        import re
+        def _shortver(v):
+            v = (v or "").strip()
+            m = re.search(r"\d+(?:\.\d+)+", v)  # clean version number (8.0.1, 2026.03.17)
+            return m.group(0) if m else ""
+        rows = []
+        for key, label in (("ffmpeg", "FFmpeg"), ("ffprobe", "ffprobe"), ("yt-dlp", "yt-dlp")):
+            r = results.get(key, {}); ok = r.get("installed"); ver = _shortver(r.get("version"))
+            rows.append(("✓  " if ok else "✗  ") + label + (f"   {ver}" if ok and ver else ("   not found" if not ok else "")))
+        statuses = QLabel("\n".join(rows)); statuses.setObjectName("depsStatus"); statuses.setAlignment(Qt.AlignCenter)
 
-        sources = QLabel(self._sources_html(missing))
-        sources.setObjectName("depsSources"); sources.setWordWrap(True)
-        sources.setAlignment(Qt.AlignCenter); sources.setOpenExternalLinks(True)
-        sources.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        if self._missing:
+            body = QLabel("These power downloading and exporting clips. We'll fetch the missing ones "
+                          "from their official sources — nothing downloads until you click.")
+        else:
+            body = QLabel("FFmpeg and yt-dlp are installed and ready. Re-download them if something "
+                          "seems off, or continue.")
+        body.setObjectName("welcomeSub"); body.setWordWrap(True); body.setAlignment(Qt.AlignCenter)
+        body.setFixedWidth(440)
+
+        sources = QLabel("From their official sources — FFmpeg (gyan.dev) · yt-dlp (github.com/yt-dlp)")
+        sources.setObjectName("depsSources"); sources.setWordWrap(True); sources.setAlignment(Qt.AlignCenter)
+        sources.setFixedWidth(440)
 
         self.status_lbl = QLabel(""); self.status_lbl.setObjectName("mono")
         self.status_lbl.setAlignment(Qt.AlignCenter); self.status_lbl.hide()
         self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.hide()
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(10)
-        self.skip_btn = QPushButton("Skip (install manually)")
-        self.skip_btn.clicked.connect(lambda: self._on_skip and self._on_skip())
-        self.install_btn = QPushButton("Download && Install")
-        self.install_btn.setObjectName("primary")
-        self.install_btn.clicked.connect(lambda: self._on_consent and self._on_consent())
-        btn_row.addWidget(self.skip_btn); btn_row.addWidget(self.install_btn, 1)
+        if self._missing:
+            self.secondary_btn = QPushButton("Skip")
+            self.secondary_btn.clicked.connect(lambda: self._on_continue and self._on_continue())
+            self.primary_btn = QPushButton("Download && Install")
+            self.primary_btn.clicked.connect(lambda: self._on_install and self._on_install(self._missing))
+        else:
+            self.secondary_btn = QPushButton("Re-download")
+            self.secondary_btn.clicked.connect(lambda: self._on_install and self._on_install(["ffmpeg", "yt-dlp"]))
+            self.primary_btn = QPushButton("Continue  →")
+            self.primary_btn.clicked.connect(lambda: self._on_continue and self._on_continue())
+        self.primary_btn.setObjectName("primary")
+        btn_row.addWidget(self.secondary_btn); btn_row.addWidget(self.primary_btn, 1)
 
-        for w in (badge, title, body, sources):
+        for w in (badge, title, statuses, body, sources):
             c.addWidget(w, alignment=Qt.AlignCenter)
         c.addWidget(self.status_lbl)
         c.addWidget(self.bar)
         c.addLayout(btn_row)
         outer.addWidget(card)
 
-    @staticmethod
-    def _sources_html(missing):
-        rows = []
-        if {"ffmpeg", "ffprobe"} & set(missing):
-            rows.append(f'FFmpeg — <a href="{FFMPEG_SOURCE_URL}">{FFMPEG_SOURCE_URL}</a>')
-        if "yt-dlp" in missing:
-            rows.append(f'yt-dlp — <a href="{YTDLP_SOURCE_URL}">{YTDLP_SOURCE_URL}</a>')
-        return "<br>".join(rows)
-
     def set_busy(self, busy):
-        self.install_btn.setEnabled(not busy)
-        self.skip_btn.setEnabled(not busy)
+        self.primary_btn.setEnabled(not busy)
+        self.secondary_btn.setEnabled(not busy)
         self.status_lbl.setVisible(busy)
         self.bar.setVisible(busy)
 
@@ -1276,6 +1275,7 @@ class MainWindow(QMainWindow):
         self.deps = None  # created on demand by _check_dependencies (DepsConsentOverlay)
         self.deps_worker = None
         self._missing = []
+        self._missing_deps = []  # set by _check_dependencies; read by onboarding
         self.tour = TourOverlay(central, [
             (self.src_row, "Add a clip",
              "Paste a video URL and hit Add URL — or Add file. Pull from YouTube, TikTok, "
@@ -1369,31 +1369,39 @@ class MainWindow(QMainWindow):
                           "stream alerts fast.<br>Built with PySide6 + ffmpeg.")
 
     def _show_start(self):
-        """When the queue is empty: the first-run welcome (once), else the clean add screen."""
+        """Launch landing — always the welcome intro (when no clip is open)."""
         if self.queue:
             return
-        from PySide6.QtCore import QSettings
-        screen = self.empty if QSettings("deutschmark", "AlertAlert").value("welcomed", False, type=bool) else self.welcome
-        screen.setGeometry(self.centralWidget().rect())
-        screen.show(); screen.raise_()
+        self.empty.hide()
+        self.welcome.setGeometry(self.centralWidget().rect())
+        self.welcome.show(); self.welcome.raise_()
 
-    def _mark_welcomed(self):
-        from PySide6.QtCore import QSettings
-        QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
+    def _show_add(self):
+        """The paste-a-URL screen (after Get started / Skip, or when the queue empties)."""
+        if self.queue:
+            return
+        self.welcome.hide()
+        if getattr(self, "deps", None):
+            self.deps.hide()
+        self.empty.setGeometry(self.centralWidget().rect())
+        self.empty.show(); self.empty.raise_()
 
     def _begin_onboarding(self):
-        """'Get started' → go to the paste-a-URL screen. The first clip the user
-        adds then kicks off the guided editing tour."""
-        self._mark_welcomed()
-        self._onboarding = True
-        self.welcome.hide()
-        self._show_start()  # -> EmptyScreen: "paste a video URL"
+        """Welcome → Get started. First run: show the setup step, then add; the
+        first clip then starts the guided tour."""
+        from PySide6.QtCore import QSettings
+        onboarded = QSettings("deutschmark", "AlertAlert").value("onboarded", False, type=bool)
+        self._onboarding = not onboarded  # first run → first clip starts the tour
+        if self._missing_deps or not onboarded:
+            self._show_setup()
+        else:
+            self._show_add()
 
     def _skip_onboarding(self):
-        self._mark_welcomed()
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("onboarded", True)
         self._onboarding = False
-        self.welcome.hide()
-        self._show_start()  # -> clean add screen now that we're welcomed
+        self._show_add()
 
     def _submit_url(self, text):
         text = (text or "").strip()
@@ -1404,38 +1412,45 @@ class MainWindow(QMainWindow):
     def _tour_done(self):
         self.status.setText("You're set — add a clip to start.")
 
-    # --- dependency consent / install ---
+    # --- first-time setup / dependencies ---
     def _check_dependencies(self):
-        """Startup: detect missing tools. Install nothing here — only show the
-        consent panel if something is missing."""
+        """Startup: detect tools (for the status line + setup step). Show nothing
+        here — the welcome is the landing; setup is a step inside onboarding."""
         import app
         results = app.run_deps_check(force=True)
-        missing = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
-                   if not results.get(n, {}).get("installed")]
-        if not missing:
+        self._missing_deps = [n for n in ("ffmpeg", "ffprobe", "yt-dlp")
+                              if not results.get(n, {}).get("installed")]
+        if self._missing_deps:
+            self.status.setText("Some tools aren't installed yet — Get started to set them up.")
+        else:
             self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
-            self._show_start()
-            return
-        self._missing_deps = missing
+        self._show_start()  # welcome is the first screen
+
+    def _show_setup(self):
+        import app
+        results = app.run_deps_check(force=True)
+        self.welcome.hide()
         self.deps = DepsConsentOverlay(
-            self.centralWidget(), missing, self._on_deps_consent, self._on_deps_skip)
+            self.centralWidget(), results, self._setup_install, self._setup_continue)
         self.deps.setGeometry(self.centralWidget().rect())
         self.deps.show(); self.deps.raise_()
 
-    def _on_deps_consent(self):
+    def _setup_install(self, tools):
         self.deps.set_busy(True)
-        self.deps_worker = DepsInstallWorker(self._missing_deps)
+        self.deps_worker = DepsInstallWorker(tools)
         self.deps_worker.progress.connect(self.deps.set_progress)
         self.deps_worker.status.connect(self.deps.set_status)
-        self.deps_worker.finished_ok.connect(self._on_deps_ready)
+        self.deps_worker.finished_ok.connect(self._setup_continue)
         self.deps_worker.failed.connect(self._on_deps_failed)
         self.deps_worker.start()
 
-    def _on_deps_ready(self):
-        if self.deps:
+    def _setup_continue(self):
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("onboarded", True)
+        self._missing_deps = []
+        if getattr(self, "deps", None):
             self.deps.hide(); self.deps.deleteLater(); self.deps = None
-        self.status.setText("Ready — dependencies installed.")
-        self._show_start()
+        self._show_add()  # the _onboarding flag persists → first clip starts the tour
 
     def _on_deps_failed(self, msg):
         from PySide6.QtWidgets import QMessageBox
@@ -1446,16 +1461,6 @@ class MainWindow(QMainWindow):
             "You can retry, or install them manually:\n"
             f"• FFmpeg: {FFMPEG_SOURCE_URL}\n"
             f"• yt-dlp: {YTDLP_SOURCE_URL}")
-
-    def _on_deps_skip(self):
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(
-            self, "Tools not installed",
-            "Skipping setup. Downloads and exports will fail until FFmpeg "
-            "and yt-dlp are installed and available.")
-        if self.deps:
-            self.deps.hide(); self.deps.deleteLater(); self.deps = None
-        self._show_start()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1575,9 +1580,8 @@ class MainWindow(QMainWindow):
 
     def _dl_failed(self, msg):
         self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
-        if self._onboarding:
-            self._onboarding = False
-            self._show_start()
+        # keep _onboarding armed so a successful retry still starts the tour;
+        # the add screen is still showing for the retry.
 
     @staticmethod
     def _short(name, n=26):
@@ -1671,7 +1675,7 @@ class MainWindow(QMainWindow):
             self.scrub.set_image(""); self.scrub.set_position(0.0)
             self._set_steps_enabled(False)
             self.status.setText("Queue empty — add a clip.")
-            self._show_start()
+            self._show_add()  # mid-session: back to the add screen, not the welcome
 
     # --- playback ---
     def _set_volume(self, v):
@@ -2008,6 +2012,7 @@ QMenu::item:selected {{ background: {ACCENT}; color: #0f1014; }}
 #welcomeBadge {{ background: {ACCENT}; color: #0f1014; font-size: 46px; font-weight: 800; border-radius: 42px; }}
 #welcomeTitle {{ font-size: 27px; font-weight: 800; color: #ffffff; }}
 #welcomeSub {{ color: #c7ccd6; font-size: 14px; }}
+#depsStatus {{ color: #c7ccd6; font-size: 14px; font-family: Consolas, monospace; }}
 #depsSources {{ color: #9aa0ab; font-size: 12px; }}
 #depsSources a {{ color: {ACCENT}; }}
 #wave {{ background: #0f1014; border-radius: 8px; }}
