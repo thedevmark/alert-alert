@@ -835,14 +835,13 @@ FFMPEG_SOURCE_URL = "https://www.gyan.dev/ffmpeg/builds/"
 YTDLP_SOURCE_URL = "https://github.com/yt-dlp/yt-dlp"
 
 
-class DepsConsentOverlay(QWidget):
-    """Non-dismissable-until-resolved consent panel. Nothing downloads until the
-    user explicitly clicks "Download & Install" — this explicit consent is the
-    whole point (we download third-party software on the user's behalf)."""
+class DepsConsentOverlay(GradientBackdrop):
+    """Full-screen, non-dismissable-until-resolved consent panel — the first
+    pre-onboarding step when tools are missing. Nothing downloads until the user
+    explicitly clicks "Download & Install" (we fetch third-party software for them)."""
 
     def __init__(self, parent, missing, on_consent, on_skip):
-        super().__init__(parent)
-        self.setObjectName("welcomeBackdrop")
+        super().__init__(parent)  # GradientBackdrop: full-screen branded backdrop
         self._on_consent = on_consent
         self._on_skip = on_skip
 
