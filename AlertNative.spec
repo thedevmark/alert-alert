@@ -17,7 +17,10 @@ a = Analysis(
     ['native_app.py'],
     pathex=[],
     binaries=_codec_dlls,
-    datas=[('static/favicon.ico', 'static')],  # window/exe icon only
+    datas=[
+        ('static/favicon.ico', 'static'),      # window/exe icon
+        ('static/img/logo.png', 'static/img'),  # app icon on the welcome screen
+    ],
     hiddenimports=[
         'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets',
         'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets', 'PySide6.QtNetwork',

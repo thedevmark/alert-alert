@@ -725,8 +725,11 @@ class EmptyState(QWidget):
         # app icon with a soft amber glow (gently pulsing)
         icon = QLabel(); icon.setAlignment(Qt.AlignCenter)
         lp = INTERNAL_DIR / "static" / "img" / "logo.png"
+        fav = INTERNAL_DIR / "static" / "favicon.ico"
         if lp.exists():
             icon.setPixmap(QPixmap(str(lp)).scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        elif fav.exists():  # fallback so the icon always shows even if logo.png isn't bundled
+            icon.setPixmap(QIcon(str(fav)).pixmap(120, 120))
         glow = QGraphicsDropShadowEffect(self); glow.setColor(QColor(255, 181, 71, 175))
         glow.setBlurRadius(56); glow.setOffset(0, 0); icon.setGraphicsEffect(glow)
         self._glow = QPropertyAnimation(glow, b"blurRadius", self)
