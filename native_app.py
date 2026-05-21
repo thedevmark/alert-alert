@@ -787,10 +787,8 @@ class WelcomeScreen(GradientBackdrop):
         sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True); sub.setFixedWidth(470)
         col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(32)
         self.start_btn = QPushButton("Get started  →"); self.start_btn.setObjectName("ctaAmber")
-        self.start_btn.setFixedHeight(52); self.start_btn.setMinimumWidth(206); self.start_btn.setCursor(Qt.PointingHandCursor)
-        sh = QGraphicsDropShadowEffect(self); sh.setColor(QColor(255, 181, 71, 110))
-        sh.setBlurRadius(48); sh.setOffset(0, 0); self.start_btn.setGraphicsEffect(sh)  # soft halo, not a hard drop
-        self.start_btn.clicked.connect(on_start_tour)
+        self.start_btn.setFixedHeight(50); self.start_btn.setMinimumWidth(196); self.start_btn.setCursor(Qt.PointingHandCursor)
+        self.start_btn.clicked.connect(on_start_tour)  # clean pill, no shadow box
         col.addWidget(self.start_btn, alignment=Qt.AlignCenter); col.addSpacing(18)
         self.skip_btn = QPushButton("Skip"); self.skip_btn.setObjectName("skipLink")
         self.skip_btn.setCursor(Qt.PointingHandCursor); self.skip_btn.clicked.connect(on_skip)
@@ -1116,8 +1114,13 @@ class MainWindow(QMainWindow):
         # far-left: the batch queue
         self.qpanel = qpanel = QFrame(); qpanel.setObjectName("qpanel"); qpanel.setFixedWidth(210)
         qv = QVBoxLayout(qpanel); qv.setContentsMargins(12, 12, 12, 12); qv.setSpacing(10)
+        qhdr_row = QHBoxLayout(); qhdr_row.setContentsMargins(0, 0, 0, 0); qhdr_row.setSpacing(6)
         qhdr = QLabel("QUEUE"); qhdr.setObjectName("section")
-        qv.addWidget(qhdr)
+        qcollapse = QPushButton("‹"); qcollapse.setObjectName("qcollapse"); qcollapse.setFixedSize(24, 22)
+        qcollapse.setToolTip("Collapse the queue"); qcollapse.setCursor(Qt.PointingHandCursor)
+        qcollapse.clicked.connect(self._toggle_queue)
+        qhdr_row.addWidget(qhdr); qhdr_row.addStretch(1); qhdr_row.addWidget(qcollapse)
+        qv.addLayout(qhdr_row)
         self.queue_list = QListWidget()
         self.queue_list.currentRowChanged.connect(self._select_row)
         qv.addWidget(self.queue_list, 1)
@@ -1387,15 +1390,11 @@ class MainWindow(QMainWindow):
         self.empty.show(); self.empty.raise_()
 
     def _begin_onboarding(self):
-        """Welcome → Get started. First run: show the setup step, then add; the
-        first clip then starts the guided tour."""
+        """Welcome → Get started → always the dependency check, then add. The first
+        clip (first run only) starts the guided tour."""
         from PySide6.QtCore import QSettings
-        onboarded = QSettings("deutschmark", "AlertAlert").value("onboarded", False, type=bool)
-        self._onboarding = not onboarded  # first run → first clip starts the tour
-        if self._missing_deps or not onboarded:
-            self._show_setup()
-        else:
-            self._show_add()
+        self._onboarding = not QSettings("deutschmark", "AlertAlert").value("onboarded", False, type=bool)
+        self._show_setup()  # always show the dependency-check step
 
     def _skip_onboarding(self):
         from PySide6.QtCore import QSettings
@@ -1945,6 +1944,8 @@ QLabel {{ background: transparent; }}
 #panel {{ background: #15171d; }}
 #panelScroll {{ background: #15171d; border-left: 1px solid #23262f; }}
 #qpanel {{ background: #15171d; border-right: 1px solid #23262f; }}
+#qcollapse {{ background: transparent; border: none; color: #9aa0ad; font-size: 16px; padding: 0; border-radius: 5px; }}
+#qcollapse:hover {{ background: #2a2f3c; color: {ACCENT}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #353b48; border-radius: 5px; min-height: 30px; }}
 QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
