@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QPushButton, QLabel, QFileDialog, QSlider, QComboBox, QCheckBox,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem, QProgressBar, QFrame,
-    QListWidget, QListWidgetItem, QGraphicsDropShadowEffect,
+    QListWidget, QListWidgetItem, QGraphicsDropShadowEffect, QScrollArea,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -376,7 +376,7 @@ class DownloadWorker(QThread):
 
 
 def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
-                     end_buffer=0, audio_src=None, image_src=None):
+                     end_buffer=0, audio_src=None, image_src=None, fade_dur=0.35):
     """Construct the ffmpeg export command. Pure function (unit-testable).
 
     audio_src: replace the clip's audio with this file (separate-audio override).
@@ -417,7 +417,7 @@ def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
     if normalize:
         af.append("loudnorm=I=-16:TP=-1.5:LRA=11")
     if fade and fade != "none":
-        fl = 0.35
+        fl = float(fade_dur)
         if fade in ("start", "both"):
             af.append(f"afade=t=in:st=0:d={fl}")
         if fade in ("end", "both") and trim_len > fl:
@@ -441,16 +441,16 @@ class ExportWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade,
-                 end_buffer=0, audio_src=None, image_src=None):
+                 end_buffer=0, audio_src=None, image_src=None, fade_dur=0.35):
         super().__init__()
         self.args = (src, out, crop, trim, out_size, crf, normalize, fade,
-                     end_buffer, audio_src, image_src)
+                     end_buffer, audio_src, image_src, fade_dur)
 
     def run(self):
         (src, out, crop, trim, out_size, crf, normalize, fade,
-         end_buffer, audio_src, image_src) = self.args
+         end_buffer, audio_src, image_src, fade_dur) = self.args
         cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
-                               end_buffer, audio_src, image_src)
+                               end_buffer, audio_src, image_src, fade_dur)
         cmd += ["-progress", "pipe:1", "-nostats"]
         total = max(0.001, trim[1] - trim[0]) + (end_buffer or 0)
         try:
@@ -709,68 +709,14 @@ class Scrubber(QWidget):
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Empty state — the start screen shown until a clip is loaded
+# Start screens: shared branded backdrop + first-run welcome + clean empty
 # ──────────────────────────────────────────────────────────────────────
-class EmptyState(QWidget):
-    """The branded, led welcome (ported from the web app): navy→amber radial
-    backdrop, glowing app icon, the Alert! Alert! wordmark, and a confident amber
-    CTA that walks you through making your first alert with a sample clip."""
+class GradientBackdrop(QWidget):
+    """Branded navy→amber radial backdrop (web welcome look) filling the window."""
 
-    def __init__(self, parent, on_start_tour, on_skip):
+    def __init__(self, parent):
         super().__init__(parent)
         self.setObjectName("emptyBackdrop")
-        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter); outer.setContentsMargins(24, 24, 24, 24)
-        col = QVBoxLayout(); col.setAlignment(Qt.AlignCenter); col.setSpacing(0)
-
-        # app icon with a soft amber glow (gently pulsing)
-        icon = QLabel(); icon.setAlignment(Qt.AlignCenter)
-        lp = INTERNAL_DIR / "static" / "img" / "logo.png"
-        fav = INTERNAL_DIR / "static" / "favicon.ico"
-        if lp.exists():
-            icon.setPixmap(QPixmap(str(lp)).scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        elif fav.exists():  # fallback so the icon always shows even if logo.png isn't bundled
-            icon.setPixmap(QIcon(str(fav)).pixmap(120, 120))
-        glow = QGraphicsDropShadowEffect(self); glow.setColor(QColor(255, 181, 71, 175))
-        glow.setBlurRadius(56); glow.setOffset(0, 0); icon.setGraphicsEffect(glow)
-        self._glow = QPropertyAnimation(glow, b"blurRadius", self)
-        self._glow.setKeyValueAt(0.0, 46); self._glow.setKeyValueAt(0.5, 82); self._glow.setKeyValueAt(1.0, 46)
-        self._glow.setDuration(2800); self._glow.setEasingCurve(QEasingCurve.InOutSine); self._glow.setLoopCount(-1)
-        self._glow.start()
-        col.addWidget(icon, alignment=Qt.AlignCenter); col.addSpacing(22)
-
-        wordmark = QLabel('Alert<span style="color:#FFB547;">!</span> Alert<span style="color:#EEF4FA;">!</span>')
-        wordmark.setTextFormat(Qt.RichText); wordmark.setObjectName("emptyWordmark"); wordmark.setAlignment(Qt.AlignCenter)
-        col.addWidget(wordmark, alignment=Qt.AlignCenter); col.addSpacing(12)
-        head = QLabel("Turn a video into a finished alert clip."); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
-        col.addWidget(head, alignment=Qt.AlignCenter); col.addSpacing(14)
-        sub = QLabel("We'll walk you through it on a sample clip — load, frame, trim, and export. Takes about a minute.")
-        sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True)
-        sub.setFixedWidth(460)
-        col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(28)
-
-        self.status = QLabel(""); self.status.setObjectName("emptyStatus"); self.status.setAlignment(Qt.AlignCenter)
-        self.status.hide()
-        col.addWidget(self.status, alignment=Qt.AlignCenter); col.addSpacing(6)
-
-        self.start_btn = QPushButton("Start tour  →"); self.start_btn.setObjectName("ctaAmber")
-        self.start_btn.setFixedHeight(56); self.start_btn.setMinimumWidth(230)
-        self.start_btn.setCursor(Qt.PointingHandCursor)
-        sh = QGraphicsDropShadowEffect(self); sh.setColor(QColor(255, 181, 71, 120))
-        sh.setBlurRadius(34); sh.setOffset(0, 9); self.start_btn.setGraphicsEffect(sh)
-        self.start_btn.clicked.connect(on_start_tour)
-        col.addWidget(self.start_btn, alignment=Qt.AlignCenter); col.addSpacing(16)
-        self.skip_btn = QPushButton("Skip — let me add my own clip"); self.skip_btn.setObjectName("skipLink")
-        self.skip_btn.setCursor(Qt.PointingHandCursor); self.skip_btn.clicked.connect(on_skip)
-        col.addWidget(self.skip_btn, alignment=Qt.AlignCenter)
-        outer.addLayout(col)
-
-    def set_busy(self, text):
-        self.status.setText(text); self.status.show()
-        self.start_btn.setEnabled(False); self.skip_btn.setEnabled(False)
-
-    def set_error(self, text):
-        self.status.setText(text); self.status.show()
-        self.start_btn.setEnabled(True); self.skip_btn.setEnabled(True)
 
     def showEvent(self, event):
         if self.parent():
@@ -778,8 +724,6 @@ class EmptyState(QWidget):
         super().showEvent(event)
 
     def paintEvent(self, event):
-        # Branded backdrop: deep navy radial weighted to the bottom, with a warm
-        # amber glow up top — matching the web app's welcome screen.
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, True)
         w, h = self.width(), self.height()
         base = QRadialGradient(w * 0.5, h * 1.15, max(w, h) * 1.25)
@@ -789,6 +733,81 @@ class EmptyState(QWidget):
         amber = QRadialGradient(w * 0.5, h * 0.27, max(w, h) * 0.62)
         amber.setColorAt(0.0, QColor(255, 181, 71, 40)); amber.setColorAt(0.6, QColor(255, 181, 71, 0))
         p.fillRect(self.rect(), QBrush(amber))
+
+    @staticmethod
+    def app_icon(size):
+        lp = INTERNAL_DIR / "static" / "img" / "logo.png"
+        fav = INTERNAL_DIR / "static" / "favicon.ico"
+        if lp.exists():
+            return QPixmap(str(lp)).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        if fav.exists():
+            return QIcon(str(fav)).pixmap(size, size)
+        return QPixmap()
+
+
+class WelcomeScreen(GradientBackdrop):
+    """First-run onboarding only: glowing icon, wordmark, a led 'Start tour' + Skip."""
+
+    def __init__(self, parent, on_start_tour, on_skip):
+        super().__init__(parent)
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter); outer.setContentsMargins(24, 24, 24, 24)
+        col = QVBoxLayout(); col.setAlignment(Qt.AlignCenter); col.setSpacing(0)
+        icon = QLabel(); icon.setAlignment(Qt.AlignCenter); icon.setPixmap(self.app_icon(120))
+        glow = QGraphicsDropShadowEffect(self); glow.setColor(QColor(255, 181, 71, 175))
+        glow.setBlurRadius(56); glow.setOffset(0, 0); icon.setGraphicsEffect(glow)
+        self._glow = QPropertyAnimation(glow, b"blurRadius", self)
+        self._glow.setKeyValueAt(0.0, 46); self._glow.setKeyValueAt(0.5, 82); self._glow.setKeyValueAt(1.0, 46)
+        self._glow.setDuration(2800); self._glow.setEasingCurve(QEasingCurve.InOutSine); self._glow.setLoopCount(-1)
+        self._glow.start()
+        col.addWidget(icon, alignment=Qt.AlignCenter); col.addSpacing(22)
+        wordmark = QLabel('Alert<span style="color:#FFB547;">!</span> Alert<span style="color:#EEF4FA;">!</span>')
+        wordmark.setTextFormat(Qt.RichText); wordmark.setObjectName("emptyWordmark"); wordmark.setAlignment(Qt.AlignCenter)
+        col.addWidget(wordmark, alignment=Qt.AlignCenter); col.addSpacing(12)
+        head = QLabel("Turn a video into a finished alert clip."); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
+        col.addWidget(head, alignment=Qt.AlignCenter); col.addSpacing(14)
+        sub = QLabel("We'll walk you through it on a sample clip — load, frame, trim, and export. Takes about a minute.")
+        sub.setObjectName("emptySub"); sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True); sub.setFixedWidth(460)
+        col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(32)
+        self.start_btn = QPushButton("Start tour  →"); self.start_btn.setObjectName("ctaAmber")
+        self.start_btn.setFixedHeight(52); self.start_btn.setMinimumWidth(206); self.start_btn.setCursor(Qt.PointingHandCursor)
+        sh = QGraphicsDropShadowEffect(self); sh.setColor(QColor(255, 181, 71, 110))
+        sh.setBlurRadius(48); sh.setOffset(0, 0); self.start_btn.setGraphicsEffect(sh)  # soft halo, not a hard drop
+        self.start_btn.clicked.connect(on_start_tour)
+        col.addWidget(self.start_btn, alignment=Qt.AlignCenter); col.addSpacing(18)
+        self.skip_btn = QPushButton("Skip"); self.skip_btn.setObjectName("skipLink")
+        self.skip_btn.setCursor(Qt.PointingHandCursor); self.skip_btn.clicked.connect(on_skip)
+        col.addWidget(self.skip_btn, alignment=Qt.AlignCenter)
+        outer.addLayout(col)
+
+
+class EmptyScreen(GradientBackdrop):
+    """Clean centered add screen (no video, no sample) — shown when the queue is empty."""
+
+    def __init__(self, parent, on_url, on_file):
+        super().__init__(parent)
+        outer = QVBoxLayout(self); outer.setAlignment(Qt.AlignCenter); outer.setContentsMargins(24, 24, 24, 24)
+        col = QVBoxLayout(); col.setAlignment(Qt.AlignCenter); col.setSpacing(0)
+        icon = QLabel(); icon.setAlignment(Qt.AlignCenter); icon.setPixmap(self.app_icon(82))
+        glow = QGraphicsDropShadowEffect(self); glow.setColor(QColor(255, 181, 71, 110))
+        glow.setBlurRadius(38); glow.setOffset(0, 0); icon.setGraphicsEffect(glow)
+        col.addWidget(icon, alignment=Qt.AlignCenter); col.addSpacing(18)
+        head = QLabel("Add a clip"); head.setObjectName("emptyTitle"); head.setAlignment(Qt.AlignCenter)
+        col.addWidget(head, alignment=Qt.AlignCenter); col.addSpacing(10)
+        sub = QLabel("Paste a video URL, or open a file from your computer."); sub.setObjectName("emptySub")
+        sub.setAlignment(Qt.AlignCenter); sub.setWordWrap(True); sub.setFixedWidth(420)
+        col.addWidget(sub, alignment=Qt.AlignCenter); col.addSpacing(26)
+        self.url = QLineEdit(); self.url.setPlaceholderText("Paste a video URL…")
+        self.url.setObjectName("emptyInput"); self.url.setFixedWidth(440); self.url.setFixedHeight(50)
+        self.url.returnPressed.connect(lambda: on_url(self.url.text()))
+        col.addWidget(self.url, alignment=Qt.AlignCenter); col.addSpacing(12)
+        row = QHBoxLayout(); row.setSpacing(10); row.setAlignment(Qt.AlignCenter)
+        b_url = QPushButton("Add URL"); b_url.setObjectName("ctaAmber"); b_url.setFixedHeight(48); b_url.setMinimumWidth(140)
+        b_url.setCursor(Qt.PointingHandCursor); b_url.clicked.connect(lambda: on_url(self.url.text()))
+        b_file = QPushButton("Add file"); b_file.setObjectName("ctaGhost"); b_file.setFixedHeight(48)
+        b_file.setCursor(Qt.PointingHandCursor); b_file.clicked.connect(on_file)
+        row.addWidget(b_url); row.addWidget(b_file)
+        col.addLayout(row)
+        outer.addLayout(col)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1108,10 +1127,8 @@ class MainWindow(QMainWindow):
         self.url_input = QLineEdit(); self.url_input.setPlaceholderText("Paste a video URL (or drag a file in) to add…")
         self.load_btn = QPushButton("Add URL")
         self.file_btn = QPushButton("Add file")
-        self.sample_btn = QPushButton("Try sample"); self.sample_btn.setToolTip("Load a sample clip so you can try it without your own")
-        self.sample_btn.clicked.connect(self.on_sample)
         src.addWidget(self.qtoggle_btn); src.addWidget(self.url_input)
-        src.addWidget(self.load_btn); src.addWidget(self.file_btn); src.addWidget(self.sample_btn)
+        src.addWidget(self.load_btn); src.addWidget(self.file_btn)
         left.addWidget(self.src_row)
 
         self.view = CropView()
@@ -1147,7 +1164,7 @@ class MainWindow(QMainWindow):
         root.addLayout(left, 1)
 
         # right: controls panel
-        panel = QFrame(); panel.setObjectName("panel"); panel.setFixedWidth(320)
+        panel = QFrame(); panel.setObjectName("panel")
         p = QVBoxLayout(panel); p.setContentsMargins(20, 18, 20, 18); p.setSpacing(11)
 
         p.addWidget(self._h("Crop & frame", 1))
@@ -1191,12 +1208,13 @@ class MainWindow(QMainWindow):
                                     tip="Lower CRF = higher quality + bigger file. Balanced (23) is a good default; Small (28) is tightest.")
         self.fade = self._segment(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize,
                                   tip="Fade the audio in at the start, out at the end, both, or off.")
+        self.fade_dur = self._segment(eg, "Fade length", ["0.25", "0.5", "1.0"], 1, lambda v: f"{v}s",
+                                      tip="How long each audio fade lasts.")
         self.buffer = self._segment(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
                                     lambda v: "None" if v == "0" else f"{v}s",
                                     tip="Hold the last frame for a few seconds so the alert has room to fade out on stream.")
-        self.normalize = QCheckBox("Normalize audio"); self.normalize.setChecked(True)
-        self.normalize.setToolTip("Even out loudness to a consistent target (~-16 LUFS) so alerts aren't wildly louder than each other.")
-        eg.addWidget(self.normalize)
+        self.normalize = self._segment(eg, "Normalize audio", ["off", "on"], 1, str.capitalize,
+                                       tip="Even out loudness to a consistent target (~-16 LUFS) so alerts aren't wildly louder than each other.")
         self.export_btn = QPushButton("Export current"); self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
         eg.addWidget(self.export_btn)
@@ -1206,7 +1224,12 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Add a clip to get started."); self.status.setWordWrap(True); self.status.setObjectName("statusline")
         p.addWidget(self.status)
         p.addStretch(1)
-        root.addWidget(panel)
+        # wrap the controls in a scroll area so they scroll when the window is short
+        pscroll = QScrollArea(); pscroll.setObjectName("panelScroll"); pscroll.setWidgetResizable(True)
+        pscroll.setFixedWidth(320); pscroll.setFrameShape(QFrame.NoFrame)
+        pscroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        pscroll.setWidget(panel)
+        root.addWidget(pscroll)
 
         self.setCentralWidget(central)
         self.trim_in = 0.0
@@ -1230,8 +1253,8 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._last_output = None
-        self.empty = EmptyState(central, self._start_onboarding, self._skip_onboarding)
-        self._toured = False
+        self.welcome = WelcomeScreen(central, self._start_onboarding, self._skip_onboarding)  # first-run only
+        self.empty = EmptyScreen(central, self._submit_url, self.on_open_file)  # clean add screen
         self._force_tour = False
         self.deps = None  # created on demand by _check_dependencies (DepsConsentOverlay)
         self.deps_worker = None
@@ -1258,7 +1281,7 @@ class MainWindow(QMainWindow):
         self.drop_hint.setObjectName("drophint"); self.drop_hint.setAlignment(Qt.AlignCenter)
         self.drop_hint.hide()
         self._set_steps_enabled(False)  # nothing to edit until a clip is loaded
-        QTimer.singleShot(0, self._show_empty)  # centered start screen until first clip
+        QTimer.singleShot(0, self._show_start)  # centered start screen until first clip
         QTimer.singleShot(0, self._check_dependencies)
 
     # --- menu ---
@@ -1327,23 +1350,36 @@ class MainWindow(QMainWindow):
                           "<b>Alert! Alert!</b><br>Native build — trim, crop & export "
                           "stream alerts fast.<br>Built with PySide6 + ffmpeg.")
 
-    def _show_empty(self):
-        if not self.queue:
-            self.empty.setGeometry(self.centralWidget().rect())
-            self.empty.show(); self.empty.raise_()
+    def _show_start(self):
+        """When the queue is empty: the first-run welcome (once), else the clean add screen."""
+        if self.queue:
+            return
+        from PySide6.QtCore import QSettings
+        screen = self.empty if QSettings("deutschmark", "AlertAlert").value("welcomed", False, type=bool) else self.welcome
+        screen.setGeometry(self.centralWidget().rect())
+        screen.show(); screen.raise_()
+
+    def _mark_welcomed(self):
+        from PySide6.QtCore import QSettings
+        QSettings("deutschmark", "AlertAlert").setValue("welcomed", True)
 
     def _start_onboarding(self):
-        """Led onboarding: load a sample clip, then run the guided tour on it."""
-        self.empty.set_busy("Loading a sample clip to walk you through…")
+        """Led onboarding: load the (bundled, instant) sample clip, then run the tour on it."""
+        self._mark_welcomed()
+        self.welcome.hide()
         self._force_tour = True
         self.on_sample()
 
     def _skip_onboarding(self):
-        from PySide6.QtCore import QSettings
-        QSettings("deutschmark", "AlertAlert").setValue("toured", True)
-        self._toured = True
-        self.empty.hide()
-        self.status.setText("Add a clip with the bar up top — paste a URL, Add file, or Try sample.")
+        self._mark_welcomed()
+        self.welcome.hide()
+        self._show_start()  # -> clean add screen now that we're welcomed
+
+    def _submit_url(self, text):
+        text = (text or "").strip()
+        if text:
+            self.url_input.setText(text)
+            self.on_load_url()
 
     def _tour_done(self):
         self.status.setText("You're set — add a clip to start.")
@@ -1358,7 +1394,7 @@ class MainWindow(QMainWindow):
                    if not results.get(n, {}).get("installed")]
         if not missing:
             self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
-            self._show_empty()
+            self._show_start()
             return
         self._missing_deps = missing
         self.deps = DepsConsentOverlay(
@@ -1379,7 +1415,7 @@ class MainWindow(QMainWindow):
         if self.deps:
             self.deps.hide(); self.deps.deleteLater(); self.deps = None
         self.status.setText("Ready — dependencies installed.")
-        self._show_empty()
+        self._show_start()
 
     def _on_deps_failed(self, msg):
         from PySide6.QtWidgets import QMessageBox
@@ -1399,7 +1435,7 @@ class MainWindow(QMainWindow):
             "and yt-dlp are installed and available.")
         if self.deps:
             self.deps.hide(); self.deps.deleteLater(); self.deps = None
-        self._show_empty()
+        self._show_start()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1407,8 +1443,10 @@ class MainWindow(QMainWindow):
             self.deps.setGeometry(self.centralWidget().rect())
         if getattr(self, "tour", None) and self.tour.isVisible():
             self.tour.relayout()
-        if getattr(self, "empty", None) and self.empty.isVisible():
-            self.empty.setGeometry(self.centralWidget().rect())
+        for scr in ("welcome", "empty"):
+            s = getattr(self, scr, None)
+            if s and s.isVisible():
+                s.setGeometry(self.centralWidget().rect())
         if getattr(self, "drop_hint", None):
             self.drop_hint.setGeometry(self.centralWidget().rect())
 
@@ -1494,7 +1532,7 @@ class MainWindow(QMainWindow):
     # --- source loading ---
     def _set_adding(self, busy):
         self.load_btn.setText("Adding…" if busy else "Add URL")
-        for b in (self.load_btn, self.file_btn, self.sample_btn):
+        for b in (self.load_btn, self.file_btn):
             b.setEnabled(not busy)
 
     def on_load_url(self):
@@ -1517,9 +1555,9 @@ class MainWindow(QMainWindow):
 
     def _dl_failed(self, msg):
         self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
-        if self._force_tour and self.empty.isVisible():
+        if self._force_tour:
             self._force_tour = False
-            self.empty.set_error("Couldn't load the sample — check your connection, or Skip and add your own.")
+            self._show_start()
 
     @staticmethod
     def _short(name, n=26):
@@ -1540,21 +1578,11 @@ class MainWindow(QMainWindow):
         li = QListWidgetItem(self._short(name)); li.setToolTip(name)  # hover to see full name
         self.queue_list.addItem(li)
         self.queue_list.setCurrentRow(len(self.queue) - 1)  # -> _select_row loads it
-        self.empty.hide()  # leave the start screen now that there's a clip
+        self.welcome.hide(); self.empty.hide()  # leave the start screen now that there's a clip
         self.status.setText(f"Added {self._short(name)}  ·  {len(self.queue)} in queue")
-        if self._force_tour:           # came from "Start tour" — always run it
+        if self._force_tour:           # came from "Start tour" — run the guided tour
             self._force_tour = False
             QTimer.singleShot(450, self.tour.start)
-        else:
-            self._maybe_start_tour()
-
-    def _maybe_start_tour(self):
-        from PySide6.QtCore import QSettings
-        s = QSettings("deutschmark", "AlertAlert")
-        if not self._toured and not s.value("toured", False, type=bool):
-            self._toured = True
-            s.setValue("toured", True)
-            QTimer.singleShot(400, self.tour.start)  # guide editing once a clip is in
 
     # --- queue: select / save / restore ---
     def _select_row(self, row):
@@ -1574,10 +1602,13 @@ class MainWindow(QMainWindow):
         it.audio_src, it.image_src = self.audio_src, self.image_src
 
     def _set_steps_enabled(self, on):
+        # everything that needs a loaded clip to mean anything
         for w in (self.crop_group, self.export_group,
-                  self.aud_file_btn, self.aud_url_btn, self.img_btn, self.clear_ovr_btn):
+                  self.aud_file_btn, self.aud_url_btn, self.img_btn, self.clear_ovr_btn,
+                  self.play_btn, self.vol, self.scrub):
             w.setEnabled(on)
         self.export_btn.setEnabled(on)
+        self.trim_lbl.setVisible(on); self.time_lbl.setVisible(on)
 
     def _load_item(self, it):
         self.clip_path = it.path
@@ -1620,7 +1651,7 @@ class MainWindow(QMainWindow):
             self.scrub.set_image(""); self.scrub.set_position(0.0)
             self._set_steps_enabled(False)
             self.status.setText("Queue empty — add a clip.")
-            self._show_empty()
+            self._show_start()
 
     # --- playback ---
     def _set_volume(self, v):
@@ -1638,9 +1669,15 @@ class MainWindow(QMainWindow):
                 self.aud_player.play()
 
     def on_position(self, ms):
+        sec = ms / 1000
+        # keep preview playback inside the user's trim bounds (loop within in→out)
+        if (self.duration and self.trim_out > self.trim_in
+                and self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState):
+            if sec >= self.trim_out or sec < self.trim_in - 0.05:
+                self.player.setPosition(int(self.trim_in * 1000)); sec = self.trim_in
         if self.duration:
-            self.scrub.set_position(ms / 1000 / self.duration)
-        self.time_lbl.setText(f"{self._fmt(ms / 1000)} / {self._fmt(self.duration)}")
+            self.scrub.set_position(sec / self.duration)
+        self.time_lbl.setText(f"{self._fmt(sec)} / {self._fmt(self.duration)}")
 
     def _on_scrub_trim(self, in_frac, out_frac):
         if not self.duration:
@@ -1799,8 +1836,9 @@ class MainWindow(QMainWindow):
         self.export_btn.setEnabled(False); self.bar.setValue(0); self.bar.show()
         self.status.setText("Exporting…")
         self.ex = ExportWorker(self.clip_path, str(out), crop, trim, out_size, crf,
-                               self.normalize.isChecked(), self.fade.currentData(),
-                               int(self.buffer.currentData()), self.audio_src, self.image_src)
+                               (self.normalize.currentData() == "on"), self.fade.currentData(),
+                               int(self.buffer.currentData()), self.audio_src, self.image_src,
+                               float(self.fade_dur.currentData()))
         self.ex.progress.connect(self.bar.setValue)
         self.ex.finished_ok.connect(self._exported)
         self.ex.failed.connect(self._export_failed)
@@ -1850,8 +1888,9 @@ class MainWindow(QMainWindow):
         trim = (it.trim_in, it.trim_out if it.trim_out > it.trim_in else it.duration)
         worker = ExportWorker(it.path, str(out), crop, trim,
                               int(self.res.currentData()), int(self.preset.currentData()),
-                              self.normalize.isChecked(), self.fade.currentData(),
-                              int(self.buffer.currentData()), it.audio_src, it.image_src)
+                              (self.normalize.currentData() == "on"), self.fade.currentData(),
+                              int(self.buffer.currentData()), it.audio_src, it.image_src,
+                              float(self.fade_dur.currentData()))
         self._batch_workers.append(worker)  # keep a reference for the whole batch
         worker.progress.connect(self._eq_progress)
         worker.finished_ok.connect(lambda p, i=idx: self._eq_item_done(i, True))
@@ -1879,8 +1918,14 @@ QSS = f"""
 QMainWindow {{ background: #0f1014; }}
 QWidget {{ color: #e6e9ef; font-family: 'Segoe UI', sans-serif; font-size: 13px; }}
 QLabel {{ background: transparent; }}
-#panel {{ background: #15171d; border-left: 1px solid #23262f; }}
+#panel {{ background: #15171d; }}
+#panelScroll {{ background: #15171d; border-left: 1px solid #23262f; }}
 #qpanel {{ background: #15171d; border-right: 1px solid #23262f; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: #353b48; border-radius: 5px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 #preview {{ background: #000; border: none; }}
 #section {{ color: #aeb4c0; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }}
 #fieldlabel {{ color: #9aa0ad; font-size: 12px; }}
@@ -1891,10 +1936,14 @@ QLabel {{ background: transparent; }}
 #emptyTitle {{ font-size: 30px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }}
 #emptySub {{ color: #9fb0c6; font-size: 15px; line-height: 1.5; }}
 #emptyStatus {{ color: #FFB547; font-size: 13px; }}
-#ctaAmber {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFC468, stop:1 #FFB547); color: #0D1521; border: none; border-radius: 14px; font-size: 16px; font-weight: 800; padding: 0 32px; }}
+#emptyInput {{ background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.16); border-radius: 12px; padding: 0 16px; font-size: 14px; color: #EEF4FA; }}
+#emptyInput:focus {{ border-color: #FFB547; }}
+#ctaAmber {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFC468, stop:1 #FFB547); color: #0D1521; border: none; border-radius: 26px; font-size: 16px; font-weight: 800; padding: 0 30px; }}
 #ctaAmber:hover {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #FFD080, stop:1 #FFC153); }}
 #ctaAmber:pressed {{ background: #F0A838; }}
 #ctaAmber:disabled {{ background: #6b5a37; color: #b9a37a; }}
+#ctaGhost {{ background: rgba(255,255,255,0.07); color: #DCE4F0; border: 1px solid rgba(255,255,255,0.20); border-radius: 24px; font-size: 14px; font-weight: 600; padding: 0 24px; }}
+#ctaGhost:hover {{ border-color: rgba(255,255,255,0.40); background: rgba(255,255,255,0.12); }}
 #skipLink {{ background: transparent; border: none; color: #9fb0c6; font-size: 14px; padding: 4px; }}
 #skipLink:hover {{ color: #EEF4FA; }}
 QToolTip {{ background: #1a1d25; color: #e6e9ef; border: 1px solid #2c313c; padding: 6px 8px; border-radius: 6px; }}
@@ -1910,9 +1959,9 @@ QPushButton:hover {{ border-color: {ACCENT}; background: #2a2f3c; }}
 QPushButton:pressed {{ background: #1b1f27; }}
 QPushButton:disabled {{ color: #5a5f6b; background: #1a1d24; border-color: #262a32; }}
 QPushButton#primary:pressed {{ background: #4f7fb8; }}
-QPushButton#chip {{ padding: 8px 6px; min-height: 14px; }}
+QPushButton#chip {{ padding: 9px 6px; min-height: 20px; }}
 QPushButton#chip:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
-QPushButton#seg {{ padding: 8px 4px; min-height: 14px; font-size: 12px; }}
+QPushButton#seg {{ padding: 9px 4px; min-height: 18px; font-size: 12px; }}
 QPushButton#seg:checked {{ background: {ACCENT}; color: #0f1014; border-color: {ACCENT}; font-weight: 700; }}
 QPushButton#primary {{ background: {ACCENT}; color: #0f1014; font-weight: 700; border: none; padding: 12px; font-size: 14px; }}
 QPushButton#primary:hover {{ background: #79a6db; }}
