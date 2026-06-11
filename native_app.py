@@ -24,6 +24,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor, QPen, QBrush, QPainter, QAction, QPixmap, QIcon, QPainterPath, QRegion, QRadialGradient,
+    QLinearGradient,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem, QProgressBar, QFrame,
     QListWidget, QListWidgetItem, QGraphicsDropShadowEffect, QScrollArea,
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 
 from app import (
@@ -375,13 +376,44 @@ class DownloadWorker(QThread):
             self.failed.emit(str(e))
 
 
-def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
-                     end_buffer=0, audio_src=None, image_src=None, fade_dur=0.35):
+def safe_output_stem(name):
+    """Sanitize a user-typed output name into a safe filename stem (no extension,
+    no path separators or reserved chars). Returns "" if nothing usable remains."""
+    import re
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    raw = raw.replace("\\", "/").split("/")[-1]  # last component only — no path traversal
+    cleaned = re.sub(r'[<>:"/|?*\x00-\x1f]', "", raw).strip(" .")
+    cleaned = re.sub(r'\.(mp4|mov|mkv|webm|avi)$', "", cleaned, flags=re.I).strip()
+    return cleaned[:60]
+
+
+def fade_gain(sec, trim_in, trim_out, a_in, a_out):
+    """Linear audio-fade multiplier (0..1) at playback time `sec`, matching the
+    export afade in/out lengths (seconds; 0 = off). Lets the preview sound like
+    the exported file will."""
+    length = max(0.0, trim_out - trim_in)
+    t = sec - trim_in
+    g = 1.0
+    if a_in and a_in > 0 and t < a_in:
+        g = min(g, t / a_in)
+    if a_out and a_out > 0 and t > length - a_out:
+        g = min(g, (length - t) / a_out)
+    return max(0.0, min(1.0, g))
+
+
+def build_export_cmd(src, out, crop, trim, out_size, crf, normalize,
+                     end_buffer=0, audio_src=None, image_src=None,
+                     afade_in=0.0, afade_out=0.0, vfade_in=0.0, vfade_out=0.0):
     """Construct the ffmpeg export command. Pure function (unit-testable).
 
     audio_src: replace the clip's audio with this file (separate-audio override).
     image_src: use this still image as the visual (cover-scaled), keeping audio
                from the clip (static-image override). Crop is ignored for images.
+    afade_in/afade_out: audio fade-in / fade-out length in seconds (0 = off).
+    vfade_in/vfade_out: visual fade-from-black / fade-to-black length in seconds
+                        (0 = off). Start/end and audio/visual are all independent.
     """
     x, y, w, h = crop
     start, end = trim
@@ -403,6 +435,12 @@ def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
             # Freeze last frame (audio ends naturally — tpad+apad deadlocks ffmpeg).
             vf += f",tpad=stop_mode=clone:stop_duration={end_buffer}"
 
+    # Visual fade from/to black over the full output length (incl. end buffer).
+    if vfade_in and vfade_in > 0:
+        vf += f",fade=t=in:st=0:d={float(vfade_in)}"
+    if vfade_out and vfade_out > 0 and total > vfade_out:
+        vf += f",fade=t=out:st={total - float(vfade_out):.3f}:d={float(vfade_out)}"
+
     # --- audio input ---
     if audio_src:
         cmd += ["-t", f"{trim_len:.3f}", "-i", str(audio_src)]
@@ -416,12 +454,10 @@ def build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
     af = []
     if normalize:
         af.append("loudnorm=I=-16:TP=-1.5:LRA=11")
-    if fade and fade != "none":
-        fl = float(fade_dur)
-        if fade in ("start", "both"):
-            af.append(f"afade=t=in:st=0:d={fl}")
-        if fade in ("end", "both") and trim_len > fl:
-            af.append(f"afade=t=out:st={trim_len - fl:.3f}:d={fl}")
+    if afade_in and afade_in > 0:
+        af.append(f"afade=t=in:st=0:d={float(afade_in)}")
+    if afade_out and afade_out > 0 and trim_len > afade_out:
+        af.append(f"afade=t=out:st={trim_len - float(afade_out):.3f}:d={float(afade_out)}")
 
     cmd += ["-map", "0:v:0", "-map", f"{a_idx}:a:0?", "-vf", vf]
     if af:
@@ -440,17 +476,21 @@ class ExportWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, src, out, crop, trim, out_size, crf, normalize, fade,
-                 end_buffer=0, audio_src=None, image_src=None, fade_dur=0.35):
+    def __init__(self, src, out, crop, trim, out_size, crf, normalize,
+                 end_buffer=0, audio_src=None, image_src=None,
+                 afade_in=0.0, afade_out=0.0, vfade_in=0.0, vfade_out=0.0):
         super().__init__()
-        self.args = (src, out, crop, trim, out_size, crf, normalize, fade,
-                     end_buffer, audio_src, image_src, fade_dur)
+        self.args = (src, out, crop, trim, out_size, crf, normalize,
+                     end_buffer, audio_src, image_src,
+                     afade_in, afade_out, vfade_in, vfade_out)
 
     def run(self):
-        (src, out, crop, trim, out_size, crf, normalize, fade,
-         end_buffer, audio_src, image_src, fade_dur) = self.args
-        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize, fade,
-                               end_buffer, audio_src, image_src, fade_dur)
+        (src, out, crop, trim, out_size, crf, normalize,
+         end_buffer, audio_src, image_src,
+         afade_in, afade_out, vfade_in, vfade_out) = self.args
+        cmd = build_export_cmd(src, out, crop, trim, out_size, crf, normalize,
+                               end_buffer, audio_src, image_src,
+                               afade_in, afade_out, vfade_in, vfade_out)
         cmd += ["-progress", "pipe:1", "-nostats"]
         total = max(0.001, trim[1] - trim[0]) + (end_buffer or 0)
         try:
@@ -652,6 +692,8 @@ class Scrubber(QWidget):
         self._in = 0.0
         self._out = 1.0
         self._drag = None
+        # fade ramp widths, as fractions of the full duration (0 = no fade)
+        self._a_in = self._a_out = self._v_in = self._v_out = 0.0
 
     def set_image(self, path):
         self._pix = QPixmap(path); self.update()
@@ -661,6 +703,10 @@ class Scrubber(QWidget):
 
     def set_region(self, in_frac, out_frac):
         self._in, self._out = in_frac, out_frac; self.update()
+
+    def set_fades(self, a_in, a_out, v_in, v_out):
+        self._a_in, self._a_out, self._v_in, self._v_out = a_in, a_out, v_in, v_out
+        self.update()
 
     def _hit(self, x):
         w = self.width() or 1
@@ -690,6 +736,28 @@ class Scrubber(QWidget):
         if px > xi:
             c = QColor(ACCENT); c.setAlpha(48); p.setBrush(c)
             p.drawRect(QRectF(xi, 0, px - xi, h))
+        # fade ramps inside the trim region — visual = black gradient wedge
+        # (literal fade to/from black), audio = accent envelope line near bottom.
+        def _clampw(frac):
+            return max(0.0, min(frac, self._out - self._in)) * w
+        if self._v_in > 0:
+            vw = _clampw(self._v_in)
+            g = QLinearGradient(xi, 0, xi + vw, 0)
+            g.setColorAt(0, QColor(0, 0, 0, 235)); g.setColorAt(1, QColor(0, 0, 0, 0))
+            p.setPen(Qt.NoPen); p.setBrush(g); p.drawRect(QRectF(xi, 0, vw, h))
+        if self._v_out > 0:
+            vw = _clampw(self._v_out)
+            g = QLinearGradient(xo - vw, 0, xo, 0)
+            g.setColorAt(0, QColor(0, 0, 0, 0)); g.setColorAt(1, QColor(0, 0, 0, 235))
+            p.setPen(Qt.NoPen); p.setBrush(g); p.drawRect(QRectF(xo - vw, 0, vw, h))
+        yb, yt = h - 5, h - 5 - (h * 0.4)
+        ap = QPen(QColor(ACCENT)); ap.setWidth(2); p.setPen(ap); p.setBrush(Qt.NoBrush)
+        if self._a_in > 0:
+            aw = _clampw(self._a_in)
+            p.drawLine(QPointF(xi, yb), QPointF(xi + aw, yt))
+        if self._a_out > 0:
+            aw = _clampw(self._a_out)
+            p.drawLine(QPointF(xo - aw, yt), QPointF(xo, yb))
         # trim region outline
         pen = QPen(QColor(ACCENT)); pen.setWidth(2); p.setPen(pen); p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(QRectF(xi + 1, 1, max(1.0, xo - xi - 2), h - 2), 6, 6)
@@ -1107,6 +1175,7 @@ class QueueItem:
 
 class Segmented(QWidget):
     """A compact row of mutually-exclusive buttons — a friendlier dropdown."""
+    changed = Signal(object)
 
     def __init__(self, items, default, fmt=None):
         super().__init__()
@@ -1124,6 +1193,7 @@ class Segmented(QWidget):
         self._value = v
         for b, val in zip(self._btns, self._items):
             b.setChecked(val == v)
+        self.changed.emit(v)
 
     def currentData(self):
         return self._value
@@ -1277,15 +1347,30 @@ class MainWindow(QMainWindow):
         self.preset = self._segment(eg, "Quality", ["18", "23", "28"], 1,
                                     {"18": "Best", "23": "Balanced", "28": "Small"}.get,
                                     tip="Lower CRF = higher quality + bigger file. Balanced (23) is a good default; Small (28) is tightest.")
-        self.fade = self._segment(eg, "Audio fade", ["none", "start", "end", "both"], 0, str.capitalize,
-                                  tip="Fade the audio in at the start, out at the end, both, or off.")
-        self.fade_dur = self._segment(eg, "Fade length", ["0.25", "0.5", "1.0"], 1, lambda v: f"{v}s",
-                                      tip="How long each audio fade lasts.")
+        # Independent fade lengths: audio + visual, each with its own in/out.
+        # "Off" = no fade on that edge; otherwise the chosen length (seconds).
+        _fade_opts = ["off", "0.25", "0.5", "1.0"]
+        _fade_fmt = lambda v: "Off" if v == "off" else f"{v}s"
+        self.afade_in = self._segment(eg, "Audio fade in", _fade_opts, 0, _fade_fmt,
+                                      tip="Fade the audio up from silence at the start. Off, or pick a length.")
+        self.afade_out = self._segment(eg, "Audio fade out", _fade_opts, 0, _fade_fmt,
+                                       tip="Fade the audio down to silence at the end. Off, or pick a length.")
+        self.vfade_in = self._segment(eg, "Visual fade in", _fade_opts, 0, _fade_fmt,
+                                      tip="Fade the picture up from black at the start. Off, or pick a length.")
+        self.vfade_out = self._segment(eg, "Visual fade out", _fade_opts, 0, _fade_fmt,
+                                       tip="Fade the picture down to black at the end. Off, or pick a length.")
         self.buffer = self._segment(eg, "End buffer (freeze)", ["0", "1", "2", "3", "5"], 2,
                                     lambda v: "None" if v == "0" else f"{v}s",
                                     tip="Hold the last frame for a few seconds so the alert has room to fade out on stream.")
         self.normalize = self._segment(eg, "Normalize audio", ["off", "on"], 1, str.capitalize,
                                        tip="Even out loudness to a consistent target (~-16 LUFS) so alerts aren't wildly louder than each other.")
+        name_box = QWidget(); nv = QVBoxLayout(name_box); nv.setContentsMargins(0, 0, 0, 0); nv.setSpacing(5)
+        nlab = QLabel("Output name (optional)"); nlab.setObjectName("fieldlabel"); nv.addWidget(nlab)
+        self.out_name = QLineEdit(); self.out_name.setPlaceholderText("alert_… (auto)")
+        self.out_name.setToolTip("Name the exported file. Leave blank for an auto name. "
+                                 "Only applies to 'Export current'.")
+        nv.addWidget(self.out_name)
+        eg.addWidget(name_box)
         self.export_btn = QPushButton("Export current"); self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
         eg.addWidget(self.export_btn)
@@ -1317,6 +1402,8 @@ class MainWindow(QMainWindow):
         self.img_btn.clicked.connect(self.on_image_file)
         self.clear_ovr_btn.clicked.connect(self.on_clear_overrides)
         self.export_btn.clicked.connect(self.on_export)
+        for seg in (self.afade_in, self.afade_out, self.vfade_in, self.vfade_out):
+            seg.changed.connect(lambda _v: self._refresh_fades())
         self.player.positionChanged.connect(self.on_position)
         self.player.durationChanged.connect(self.on_player_duration)
         self.player.playbackStateChanged.connect(
@@ -1332,9 +1419,9 @@ class MainWindow(QMainWindow):
         self._missing = []
         self._missing_deps = []  # set by _check_dependencies; read by onboarding
         self.tour = TourOverlay(central, [
-            (self.src_row, "Add a clip",
-             "Paste a video URL and hit Add URL — or Add file. Pull from YouTube, TikTok, "
-             "Instagram, Facebook, or straight off your computer."),
+            (self.src_row, "Your clip's loaded",
+             "Nice — your first clip is in. This bar up top is where clips come from: paste "
+             "another URL and hit Add URL, or Add file, any time. Let's frame this one."),
             (self.queue_list, "Your queue",
              "Every clip you add lands here. Each one keeps its own crop, trim, and audio — "
              "click a clip to edit it."),
@@ -1729,11 +1816,13 @@ class MainWindow(QMainWindow):
             x, y, w, h = it.crop
             self.view.crop.setRect(QRectF(x, y, w, h))
             self.view.viewport().update()
+        self._ensure_audio_device()  # rebind to the default sink (first-launch silent-preview guard)
         self.player.setSource(QUrl.fromLocalFile(it.path))
         self.player.play(); self.player.pause()  # show first frame but start paused (no loud autoplay loop)
         self.play_btn.setEnabled(True)
         self.scrub.set_position(0.0)
         self._set_steps_enabled(True)   # steps come alive once a clip is loaded
+        self._refresh_fades()
         self._update_trim_lbl(); self._update_ovr_lbl()
         self.status.setText(f"{self._short(it.name)} · {it.w}×{it.h}")
         self.scrub.set_image("")
@@ -1764,6 +1853,42 @@ class MainWindow(QMainWindow):
         self.audio.setVolume(v / 100.0)
         self.aud_out.setVolume(v / 100.0)
 
+    def _ensure_audio_device(self):
+        """Rebind the preview audio outputs to the current default device. Works
+        around a first-launch race (seen right after installing tools) where the
+        default audio sink isn't ready at startup, so the first preview is silent
+        until the app is restarted. Export is unaffected (it uses ffmpeg)."""
+        try:
+            dev = QMediaDevices.defaultAudioOutput()
+            if dev is not None and not dev.isNull():
+                self.audio.setDevice(dev)
+                self.aud_out.setDevice(dev)
+        except Exception:
+            pass
+
+    def _fade_secs(self, seg):
+        v = seg.currentData()
+        return 0.0 if v == "off" else float(v)
+
+    def _apply_fade_gain(self, sec):
+        """Scale the live preview volume by the audio fade envelope so it sounds
+        like the export."""
+        base = self.vol.value() / 100.0
+        out = self.trim_out if self.trim_out > self.trim_in else self.duration
+        g = fade_gain(sec, self.trim_in, out,
+                      self._fade_secs(self.afade_in), self._fade_secs(self.afade_out))
+        self.audio.setVolume(base * g)
+        self.aud_out.setVolume(base * g)
+
+    def _refresh_fades(self):
+        """Push fade lengths to the timeline so the ramps are drawn where export
+        will apply them."""
+        d = self.duration
+        if not d:
+            self.scrub.set_fades(0, 0, 0, 0); return
+        self.scrub.set_fades(self._fade_secs(self.afade_in) / d, self._fade_secs(self.afade_out) / d,
+                             self._fade_secs(self.vfade_in) / d, self._fade_secs(self.vfade_out) / d)
+
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
@@ -1781,6 +1906,7 @@ class MainWindow(QMainWindow):
                 and self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState):
             if sec >= self.trim_out or sec < self.trim_in - 0.05:
                 self.player.setPosition(int(self.trim_in * 1000)); sec = self.trim_in
+        self._apply_fade_gain(sec)
         if self.duration:
             self.scrub.set_position(sec / self.duration)
         self.time_lbl.setText(f"{self._fmt(sec)} / {self._fmt(self.duration)}")
@@ -1934,7 +2060,13 @@ class MainWindow(QMainWindow):
         if not self.clip_path:
             return
         out_dir = get_output_dir(); out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / f"alert_{uuid.uuid4().hex[:8]}.mp4"
+        stem = safe_output_stem(self.out_name.text())
+        if stem:
+            out = out_dir / f"{stem}.mp4"
+            if out.exists():  # don't clobber an existing file with the same name
+                out = out_dir / f"{stem}_{uuid.uuid4().hex[:6]}.mp4"
+        else:
+            out = out_dir / f"alert_{uuid.uuid4().hex[:8]}.mp4"
         crop = self.view.crop.crop_px()
         trim = (self.trim_in, self.trim_out if self.trim_out > self.trim_in else self.duration)
         out_size = int(self.res.currentData())
@@ -1942,9 +2074,10 @@ class MainWindow(QMainWindow):
         self.export_btn.setEnabled(False); self.bar.setValue(0); self.bar.show()
         self.status.setText("Exporting…")
         self.ex = ExportWorker(self.clip_path, str(out), crop, trim, out_size, crf,
-                               (self.normalize.currentData() == "on"), self.fade.currentData(),
+                               (self.normalize.currentData() == "on"),
                                int(self.buffer.currentData()), self.audio_src, self.image_src,
-                               float(self.fade_dur.currentData()))
+                               self._fade_secs(self.afade_in), self._fade_secs(self.afade_out),
+                               self._fade_secs(self.vfade_in), self._fade_secs(self.vfade_out))
         self.ex.progress.connect(self.bar.setValue)
         self.ex.finished_ok.connect(self._exported)
         self.ex.failed.connect(self._export_failed)
@@ -1994,9 +2127,10 @@ class MainWindow(QMainWindow):
         trim = (it.trim_in, it.trim_out if it.trim_out > it.trim_in else it.duration)
         worker = ExportWorker(it.path, str(out), crop, trim,
                               int(self.res.currentData()), int(self.preset.currentData()),
-                              (self.normalize.currentData() == "on"), self.fade.currentData(),
+                              (self.normalize.currentData() == "on"),
                               int(self.buffer.currentData()), it.audio_src, it.image_src,
-                              float(self.fade_dur.currentData()))
+                              self._fade_secs(self.afade_in), self._fade_secs(self.afade_out),
+                              self._fade_secs(self.vfade_in), self._fade_secs(self.vfade_out))
         self._batch_workers.append(worker)  # keep a reference for the whole batch
         worker.progress.connect(self._eq_progress)
         worker.finished_ok.connect(lambda p, i=idx: self._eq_item_done(i, True))
@@ -2250,7 +2384,10 @@ def require_disclaimer_acceptance() -> bool:
         return True
 
     box = QMessageBox()
-    box.setWindowTitle("Alert! Alert! — Acceptable use")
+    # Keep the bare app name as the window title — WaveLink / Windows audio
+    # session naming picks up window titles, and a subtitle here showed up as
+    # "Alert! Alert! - Acceptable Use" in capture tools.
+    box.setWindowTitle("Alert! Alert!")
     box.setIcon(QMessageBox.Information)
     box.setTextFormat(Qt.RichText)
     box.setText("<b>Before you start using Alert! Alert!</b>")
@@ -2294,6 +2431,7 @@ def main():
         return run_selftest_batch(sys.argv[i + 1])
     app = QApplication(sys.argv)
     app.setApplicationName("Alert! Alert!")
+    app.setApplicationDisplayName("Alert! Alert!")  # consistent name for capture/audio tools
     app.setStyleSheet(QSS)
     # Optional log terminal alongside the app (off by default).
     from PySide6.QtCore import QSettings
