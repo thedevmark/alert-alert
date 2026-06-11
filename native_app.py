@@ -37,7 +37,7 @@ from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from app import (
     DOWNLOADS_DIR, YTDLP, FFMPEG, FFPROBE, FFMPEG_DIR, run_subprocess,
     probe_media_file, is_youtube_url, has_deno_runtime, get_env, get_output_dir,
-    download_separate_audio, INTERNAL_DIR,
+    set_output_dir, download_separate_audio, INTERNAL_DIR,
 )
 from ytdlp import build_ytdlp_profiles, run_ytdlp_with_retries
 
@@ -794,6 +794,30 @@ class WelcomeScreen(GradientBackdrop):
         self.skip_btn.setCursor(Qt.PointingHandCursor); self.skip_btn.clicked.connect(on_skip)
         col.addWidget(self.skip_btn, alignment=Qt.AlignCenter)
         outer.addLayout(col)
+        self._busy_timer = None
+        self._busy_dots = 0
+
+    def set_busy(self, busy):
+        """Animated 'Setting up…' state while the dependency check runs — the
+        click kicks off blocking subprocess checks, so without this the button
+        looks dead until the setup screen appears."""
+        self.start_btn.setEnabled(not busy)
+        self.skip_btn.setEnabled(not busy)
+        if busy:
+            self._busy_dots = 0
+            if self._busy_timer is None:
+                self._busy_timer = QTimer(self)
+                self._busy_timer.timeout.connect(self._tick_busy)
+            self._busy_timer.start(300)
+            self._tick_busy()
+        else:
+            if self._busy_timer is not None:
+                self._busy_timer.stop()
+            self.start_btn.setText("Get started  →")
+
+    def _tick_busy(self):
+        self._busy_dots = (self._busy_dots + 1) % 4
+        self.start_btn.setText("Setting up" + "." * self._busy_dots)
 
 
 class EmptyScreen(GradientBackdrop):
@@ -1105,6 +1129,16 @@ class Segmented(QWidget):
         return self._value
 
 
+class DepsCheckWorker(QThread):
+    """Run the (blocking) dependency check off the UI thread so the welcome
+    screen can animate while 'Get started' is working."""
+    done = Signal(dict)
+
+    def run(self):
+        import app
+        self.done.emit(app.run_deps_check(force=True))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1326,6 +1360,7 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         m = self.menuBar().addMenu("&App")
         a_open = QAction("Open Output Folder", self); a_open.triggered.connect(self._open_output)
+        a_save = QAction("Set Save Folder…", self); a_save.triggered.connect(self._set_save_folder)
         a_tour = QAction("Take the tour", self); a_tour.triggered.connect(self._menu_tour)
         a_about = QAction("About", self); a_about.triggered.connect(self._about)
         a_update = QAction("Update yt-dlp", self); a_update.triggered.connect(self._update_ytdlp)
@@ -1335,7 +1370,7 @@ class MainWindow(QMainWindow):
         a_console.setChecked(QSettings("deutschmark", "AlertAlert").value("show_console", False, type=bool))
         a_console.toggled.connect(self._toggle_console)
         a_quit = QAction("Quit", self); a_quit.triggered.connect(self.close)
-        for a in (a_open, a_check, a_update, a_console, a_tour, a_about):
+        for a in (a_open, a_save, a_check, a_update, a_console, a_tour, a_about):
             m.addAction(a)
         m.addSeparator(); m.addAction(a_quit)
 
@@ -1383,6 +1418,15 @@ class MainWindow(QMainWindow):
         d = get_output_dir(); d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d)) if hasattr(os, "startfile") else None
 
+    def _set_save_folder(self):
+        """Choose where exported clips are written (persisted via settings.json)."""
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Choose save folder", str(get_output_dir()))
+        if not chosen:
+            return
+        out = set_output_dir(chosen)
+        self.status.setText(f"Saving exports to {out}")
+
     def _about(self):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.about(self, "About Alert! Alert!",
@@ -1413,7 +1457,16 @@ class MainWindow(QMainWindow):
         clip (first run only) starts the guided tour."""
         from PySide6.QtCore import QSettings
         self._onboarding = not QSettings("deutschmark", "AlertAlert").value("onboarded", False, type=bool)
-        self._show_setup()  # always show the dependency-check step
+        # Animate the button and run the dependency check off-thread so the
+        # click feels responsive instead of freezing until the setup appears.
+        self.welcome.set_busy(True)
+        self._deps_check = DepsCheckWorker()
+        self._deps_check.done.connect(self._on_deps_checked)
+        self._deps_check.start()
+
+    def _on_deps_checked(self, results):
+        self.welcome.set_busy(False)
+        self._show_setup(results)  # always show the dependency-check step
 
     def _skip_onboarding(self):
         from PySide6.QtCore import QSettings
@@ -1444,9 +1497,10 @@ class MainWindow(QMainWindow):
             self.status.setText("Ready  ·  ✓ FFmpeg   ✓ ffprobe   ✓ yt-dlp")
         self._show_start()  # welcome is the first screen
 
-    def _show_setup(self):
+    def _show_setup(self, results=None):
         import app
-        results = app.run_deps_check(force=True)
+        if results is None:
+            results = app.run_deps_check(force=True)
         self.welcome.hide()
         self.deps = DepsConsentOverlay(
             self.centralWidget(), results, self._setup_install, self._setup_continue)
