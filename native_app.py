@@ -817,13 +817,31 @@ class EmptyScreen(GradientBackdrop):
         self.url.returnPressed.connect(lambda: on_url(self.url.text()))
         col.addWidget(self.url, alignment=Qt.AlignCenter); col.addSpacing(12)
         row = QHBoxLayout(); row.setSpacing(10); row.setAlignment(Qt.AlignCenter)
-        b_url = QPushButton("Add URL"); b_url.setObjectName("ctaAmber"); b_url.setFixedHeight(48); b_url.setMinimumWidth(140)
-        b_url.setCursor(Qt.PointingHandCursor); b_url.clicked.connect(lambda: on_url(self.url.text()))
-        b_file = QPushButton("Add file"); b_file.setObjectName("ctaGhost"); b_file.setFixedHeight(48)
-        b_file.setCursor(Qt.PointingHandCursor); b_file.clicked.connect(on_file)
-        row.addWidget(b_url); row.addWidget(b_file)
-        col.addLayout(row)
+        self.b_url = QPushButton("Add URL"); self.b_url.setObjectName("ctaAmber"); self.b_url.setFixedHeight(48); self.b_url.setMinimumWidth(140)
+        self.b_url.setCursor(Qt.PointingHandCursor); self.b_url.clicked.connect(lambda: on_url(self.url.text()))
+        self.b_file = QPushButton("Add file"); self.b_file.setObjectName("ctaGhost"); self.b_file.setFixedHeight(48)
+        self.b_file.setCursor(Qt.PointingHandCursor); self.b_file.clicked.connect(on_file)
+        row.addWidget(self.b_url); row.addWidget(self.b_file)
+        col.addLayout(row); col.addSpacing(14)
+        # Busy/status line — the overlay covers the main editor, so the add
+        # progress has to be shown here or the screen looks frozen mid-download.
+        self.status_lbl = QLabel(""); self.status_lbl.setObjectName("emptySub")
+        self.status_lbl.setAlignment(Qt.AlignCenter); self.status_lbl.setWordWrap(True)
+        self.status_lbl.setFixedWidth(440); self.status_lbl.hide()
+        col.addWidget(self.status_lbl, alignment=Qt.AlignCenter)
         outer.addLayout(col)
+
+    def set_busy(self, busy):
+        self.b_url.setText("Adding…" if busy else "Add URL")
+        self.b_url.setEnabled(not busy)
+        self.b_file.setEnabled(not busy)
+        self.url.setEnabled(not busy)
+        if busy:
+            self.status_lbl.show()
+
+    def set_status(self, text):
+        self.status_lbl.setText(text)
+        self.status_lbl.setVisible(bool(text))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1386,6 +1404,7 @@ class MainWindow(QMainWindow):
         self.welcome.hide()
         if getattr(self, "deps", None):
             self.deps.hide()
+        self.empty.set_busy(False); self.empty.set_status("")  # clear any prior add state
         self.empty.setGeometry(self.centralWidget().rect())
         self.empty.show(); self.empty.raise_()
 
@@ -1558,14 +1577,24 @@ class MainWindow(QMainWindow):
         self.load_btn.setText("Adding…" if busy else "Add URL")
         for b in (self.load_btn, self.file_btn):
             b.setEnabled(not busy)
+        # When the add happens from the EmptyScreen overlay (onboarding / empty
+        # queue), the main editor's button above is hidden behind it — mirror the
+        # busy state onto the overlay or it looks frozen mid-download.
+        if self.empty.isVisible():
+            self.empty.set_busy(busy)
+
+    def _set_add_status(self, text):
+        self.status.setText(text)
+        if self.empty.isVisible():
+            self.empty.set_status(text)
 
     def on_load_url(self):
         url = self.url_input.text().strip()
         if not url:
             return
-        self._set_adding(True); self.status.setText("Downloading…")
+        self._set_adding(True); self._set_add_status("Downloading…")
         self.dl = DownloadWorker(url)
-        self.dl.progress.connect(self.status.setText)
+        self.dl.progress.connect(self._set_add_status)
         self.dl.finished_ok.connect(self._add_source)
         self.dl.failed.connect(self._dl_failed)
         self.dl.start()
@@ -1578,7 +1607,7 @@ class MainWindow(QMainWindow):
             self._add_source(path)
 
     def _dl_failed(self, msg):
-        self._set_adding(False); self.status.setText(f"Couldn't add that: {msg}")
+        self._set_adding(False); self._set_add_status(f"Couldn't add that: {msg}")
         # keep _onboarding armed so a successful retry still starts the tour;
         # the add screen is still showing for the retry.
 
