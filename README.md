@@ -105,14 +105,14 @@ Produces `dist/alert-alert.exe` (native build — `AlertNative.spec` excludes Qt
 ## deutschmark's other apps
 
 <table>
-<tr><td><img src=".github/apps/clipline.svg" width="34"></td><td><b><a href="https://github.com/thedeutschmark/clipline">Clipline</a></b><br>Livestream VODs → shortform clips with auto-captions.</td></tr>
-<tr><td><img src=".github/apps/toolset.svg" width="34"></td><td><b><a href="https://toolset.deutschmark.online">The Stream Toolset</a></b><br>OBS overlays + companion apps. One login, no subscriptions.</td></tr>
-<tr><td><img src=".github/apps/forgetmenot.png" width="34"></td><td><b><a href="https://github.com/thedeutschmark/forgetmenot">ForgetMeNot</a></b><br>A Twitch chat bot that remembers your regulars.</td></tr>
-<tr><td><img src=".github/apps/collab.svg" width="34"></td><td><b><a href="https://collab.deutschmark.online">Collab Planner</a></b><br>Finds collab windows from streamers' broadcast history.</td></tr>
-<tr><td><img src=".github/apps/pathos.svg" width="34"></td><td><b><a href="https://yourpathos.app">P.A.T.H.O.S.</a></b><br>AI career platform — resume tailoring + ATS scoring.</td></tr>
+<tr><td align="center" width="56"><img src=".github/apps/pathos.svg" width="44" alt=""></td><td><a href="https://yourpathos.app"><b>Pathos</b></a><br>Worker-side job search with source-linked roles, evidence-checked resumes, and application tracking.</td></tr>
+<tr><td align="center" width="56"><img src=".github/apps/markskill.svg" width="44" alt=""></td><td><a href="https://github.com/thedevmark/markskill"><b>Markskill</b></a><br>A product-engineering skill for AI agents: trace behavior to its owner, fix root causes, shape interfaces around real tasks, and verify claims with evidence.</td></tr>
+<tr><td align="center" width="56"><img src=".github/apps/auto-iphone-uploader.svg" width="39" alt=""></td><td><a href="https://github.com/thedevmark/auto-iphone-uploader"><b>Auto iPhone Uploader</b></a><br>Write a video's title and captions once on your PC, then post it from the real apps on your iPhone. Early preview.</td></tr>
+<tr><td align="center" width="56"><img src=".github/apps/streamer-online.svg" width="44" alt=""></td><td><a href="https://streamer.deutschmark.online"><b>Streamer Online</b></a><br>Build OBS scenes and browser-source overlays with connected streamer tools.</td></tr>
+<tr><td align="center" width="56"><img src=".github/apps/forgetmenot.png" width="32" alt=""></td><td><a href="https://github.com/thedevmark/forgetmenot"><b>ForgetMeNot</b></a><br>A local-first Twitch bot that remembers regulars, callbacks, and stream lore.</td></tr>
 </table>
 
-<sub>All projects → <a href="https://github.com/thedeutschmark">github.com/thedeutschmark</a></sub>
+<sub>All projects → <a href="https://github.com/thedevmark">github.com/thedevmark</a></sub>
 
 ---
 
