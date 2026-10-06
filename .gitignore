@@ -74,3 +74,4 @@ dist/
 .codex
 .superpowers/
 docs/superpowers/
+!.github/apps/*.png
